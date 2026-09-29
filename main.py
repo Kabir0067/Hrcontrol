@@ -40,6 +40,19 @@ from handlers import (
 #  Logging
 # ══════════════════════════════════════════════════════════════════════════
 
+_SHUTDOWN_NOISE = ("Polling is stopped", "polling exited", "Break infinity polling")
+
+
+def _quiet_shutdown_filter(record: logging.LogRecord) -> bool:
+    """
+    telebot ҳангоми хомӯшшавии муқаррарӣ сатрҳои ERROR менависад
+    («Break infinity polling» ва ғ.) — онҳо хато нестанд ва log-ро гумроҳ мекунанд.
+    Танҳо вақти хомӯшшавии қасдан пинҳон мекунем; дар ҳолати дигар намоён мемонанд.
+    """
+    stopping = globals().get("_stopping", False)
+    return not (stopping and any(n in record.getMessage() for n in _SHUTDOWN_NOISE))
+
+
 def setup_logging() -> logging.Logger:
     root = logging.getLogger()
     root.setLevel(getattr(logging, cfg.LOG_LEVEL, logging.INFO))
@@ -66,6 +79,7 @@ def setup_logging() -> logging.Logger:
 
     # Китобхонаҳои беруна набояд log-ро пур кунанд
     logging.getLogger("TeleBot").setLevel(logging.WARNING)
+    logging.getLogger("TeleBot").addFilter(_quiet_shutdown_filter)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
