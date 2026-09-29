@@ -2,6 +2,8 @@
 Description=SoftClub HR Control — Telegram bot + admin panel
 After=network-online.target
 Wants=network-online.target
+# Ҳеҷ гоҳ «аз ҳад зиёд restart» ҳисоб намешавад (бояд дар [Unit] бошад, на [Service])
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,14 +13,15 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONIOENCODING=utf-8
 ExecStart=/home/kabir0067/Hrcontrol/.venv/bin/python3 main.py
 
-# Ҳеҷ гоҳ намемирад: ҳар афтиш → аз нав
+# Ҳеҷ гоҳ намемирад: ҳар афтиш → аз нав (5с → … → то 60с, агар пай дар пай афтад)
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
+RestartSteps=5
+RestartMaxDelaySec=60
 
-# Хомӯшшавии осоишта (main.py SIGTERM-ро мегирад)
+# Хомӯшшавии осоишта: main.py SIGTERM-ро мегирад ва дар ≤10 сония мебарояд
 KillSignal=SIGTERM
-TimeoutStopSec=20
+TimeoutStopSec=30
 
 StandardOutput=journal
 StandardError=journal

@@ -94,10 +94,20 @@ def _auth(request: web.Request) -> dict | None:
 
 
 def _client_ip(request: web.Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.remote or "?"
+    """
+    IP-и воқеии мизоҷ.
+
+    Ба X-Forwarded-For бовар намекунем: мизоҷ онро худаш навишта метавонад
+    (nginx танҳо илова мекунад) ва бо ҳар дархост IP-и «нав» нишон дода,
+    маҳдудкунии кӯшишҳои вурудро мегузаронд. Паси nginx (пайваст аз localhost)
+    X-Real-IP-ро мегирем — онро nginx худаш аз $remote_addr мегузорад.
+    """
+    remote = request.remote or "?"
+    if remote in ("127.0.0.1", "::1"):
+        real = request.headers.get("X-Real-IP", "").strip()
+        if real:
+            return real
+    return remote
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -131,18 +141,38 @@ def _guard(handler):
 # ══════════════════════════════════════════════════════════════════════════
 
 async def handle_health(request: web.Request) -> web.Response:
+    """
+    /api/health          — 200, агар база кор кунад (барои панел ва nginx).
+    /api/health?strict=1 — ғайр аз ин, polling-и Telegram бояд зинда бошад;
+                           watchdog маҳз ҳаминро месанҷад.
+    """
     state = db.healthcheck()
+    now = time.time()
+    uptime = int(now - STARTED_AT)
+
+    last_poll = float(getattr(BOT, "last_poll_ok", 0) or 0)
+    poll_age = int(now - last_poll) if last_poll else None
+    polling_ok = (
+        (poll_age is not None and poll_age <= cfg.POLL_STALE_SEC)
+        or (last_poll == 0 and uptime <= cfg.POLL_STALE_SEC)      # ҳанӯз оғоз мешавад
+    )
+
+    db_ok = bool(state.get("ok"))
+    strict = request.query.get("strict", "").lower() in ("1", "true", "yes")
+    healthy = db_ok and (polling_ok or not strict)
+
     return _json({
-        "ok": bool(state.get("ok")),
+        "ok": healthy,
         "app": cfg.APP_NAME,
         "version": cfg.VERSION,
         "build": cfg.BUILD,
-        "uptime": int(time.time() - STARTED_AT),
+        "uptime": uptime,
         "time": cfg.now_str(),
         "tz": cfg.TZ_NAME,
         "bot": BOT is not None,
+        "polling": {"ok": polling_ok, "last_update_age": poll_age},
         "db": state,
-    }, 200 if state.get("ok") else 503)
+    }, 200 if healthy else 503)
 
 
 async def handle_login(request: web.Request) -> web.Response:
@@ -153,6 +183,11 @@ async def handle_login(request: web.Request) -> web.Response:
 
     if len(hits) >= cfg.LOGIN_MAX_TRIES:
         return _err("Кӯшишҳо зиёданд. Пас аз чанд дақиқа кӯшиш кунед.", 429)
+
+    if not cfg.ADMIN_PASS:
+        # Рамзи холӣ = вуруди ҳама бо сатри холӣ. Ҳеҷ гоҳ иҷозат намедиҳем.
+        log.error("🔒 ADMIN_PASS дар .env гузошта нашудааст — вуруд ба панел баста аст")
+        return _err("Панел танзим нашудааст (ADMIN_PASS)", 503)
 
     try:
         data = await request.json()

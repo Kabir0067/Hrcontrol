@@ -4,19 +4,23 @@ SoftClub / Hrcontrol — ягона манбаи танзимот.
 Ҳама танзимот аз муҳити система (environment) ё файли `.env` хонда мешаванд.
 Агар чизе набошад — қимати пешфарз кор мекунад, бинобар ин деплой ҳеҷ гоҳ
 бинобар набудани `.env` намемирад.
+
+Сирҳо (BOT_TOKEN, ADMIN_PASS, SECRET_KEY) дар код нигоҳ дошта НАМЕШАВАНД —
+танҳо дар `.env` (ба git намеравад).
 """
 
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
 APP_NAME = "SoftClub HR Control"
-VERSION = "3.0.0"
-BUILD = "2026081502"          # барои cache-busting дар панел
+VERSION = "3.1.0"
+BUILD = "2026092901"          # барои cache-busting дар панел
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -81,8 +85,9 @@ WEBAPP_URL = _s("WEBAPP_URL", "https://test.softclub.tj/hrcontrol/")
 # ──────────────────────────────────────────────────────────────────────────
 
 ADMIN_LOGIN = _s("ADMIN_LOGIN", "softclub")
-ADMIN_PASS = _s("ADMIN_PASS", "")
-SECRET_KEY = _s("SECRET_KEY", "")
+ADMIN_PASS = _s("ADMIN_PASS", "")              # холӣ бошад — вуруд ба панел баста аст
+# Холӣ бошад — калиди тасодуфӣ (токенҳо пас аз restart беэътибор мешаванд).
+SECRET_KEY = _s("SECRET_KEY", "") or secrets.token_hex(32)
 
 HTTP_HOST = _s("HTTP_HOST", "0.0.0.0")
 HTTP_PORT = _i("HTTP_PORT", 8901)
@@ -107,6 +112,10 @@ STALE_AFTER = _i("STALE_AFTER", 180)            # дақиқа
 LOOP_INTERVAL = _i("LOOP_INTERVAL", 20)         # сония, тикери фонӣ
 STATE_TTL = _i("STATE_TTL", 3600)               # ҳолати нотамоми корбар (сония)
 MAX_OPEN_REQUESTS = _i("MAX_OPEN_REQUESTS", 1)  # чанд дархости "pending" ҳамзамон
+
+# Агар getUpdates ин қадар сония муваффақ нашавад — polling «мурда» ҳисоб мешавад
+# (/api/health?strict=1 → 503 → watchdog restart мекунад).
+POLL_STALE_SEC = _i("POLL_STALE_SEC", 300)
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,7 @@
+[Unit]
+Description=SoftClub HR Control — watchdog (restart / enable / nginx link)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hrcontrol-watchdog

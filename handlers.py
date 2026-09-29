@@ -175,8 +175,17 @@ async def _safe(coro):
     try:
         return await coro
     except Exception as exc:
-        log.debug("Telegram API: %s", exc)
+        text = str(exc)
+        if "message is not modified" in text or "query is too old" in text:
+            log.debug("Telegram API: %s", text)
+        else:
+            log.warning("Telegram API: %s", text[:300])
         return None
+
+
+def _from_group(call: CallbackQuery) -> bool:
+    """Қарори роҳбарият танҳо аз паёми гурӯҳи корӣ қабул мешавад."""
+    return bool(call.message) and call.message.chat.id == GROUP_ID
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -801,6 +810,10 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         func=lambda c: c.data.startswith("d:") or c.data.startswith("accept_") or c.data.startswith("reject_")
     )
     async def cb_decision(call: CallbackQuery):
+        if not _from_group(call):
+            await _safe(bot.answer_callback_query(call.id, "Танҳо дар гурӯҳи роҳбарият"))
+            return
+
         if call.data.startswith("d:"):
             _, action, raw = call.data.split(":", 2)
             decision = "accepted" if action == "a" else "rejected"
@@ -829,6 +842,10 @@ def register_handlers(bot: AsyncTeleBot) -> None:
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith("fb:") or c.data.startswith("feedback_"))
     async def cb_feedback(call: CallbackQuery):
+        if not _from_group(call):
+            await _safe(bot.answer_callback_query(call.id, "Танҳо дар гурӯҳи роҳбарият"))
+            return
+
         raw = call.data.split(":", 1)[1] if call.data.startswith("fb:") else call.data[len("feedback_"):]
         try:
             req_id = int(raw)
