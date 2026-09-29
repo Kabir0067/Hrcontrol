@@ -3,11 +3,13 @@ SoftClub / Hrcontrol — сервери панели маъмурият (aiohttp
 
 Хусусиятҳо:
   • /api/health — бе авторизатсия, барои мониторинг ва nginx;
-  • JWT-и дуруст (padding-и base64 ислоҳшуда) + маҳдудкунии кӯшишҳои вуруд;
-  • оморҳо дар база ҳисоб мешаванд (тез);
-  • аз панел метавон дархостро тасдиқ/рад кард ва ба ҳамкор паём фиристод;
-  • экспорти CSV;
-  • статикаи панел бо кэши дуруст.
+  • JWT-и дуруст + маҳдудкунии кӯшишҳои вуруд;
+  • логин/рамзи панел аз худи панел иваз мешавад (дар база, бо PBKDF2);
+    пас аз иваз ҳамаи сессияҳои кӯҳна беэътибор мешаванд;
+  • нест кардани дархостҳо (якто, интихобшуда, аз рӯи филтр), маълумоти
+    корманд ва тозакунии пурраи база — ҳамеша пас аз нусхаи эҳтиётии худкор;
+  • омори муфассал: сабабҳо, рӯзҳои ҳафта, соатҳо, кормандон, вақти ҷавоб;
+  • экспорти CSV (бо филтрҳо) ва боргирии нусхаи база.
 """
 
 from __future__ import annotations
@@ -15,12 +17,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import glob
 import hashlib
 import hmac
 import io
 import json
 import logging
 import os
+import re
+import secrets
 import time
 from collections import defaultdict
 
@@ -33,6 +38,8 @@ log = logging.getLogger("SoftClubBot")
 
 STATIC_DIR = cfg.STATIC_DIR
 STARTED_AT = time.time()
+BACKUP_DIR = os.path.join(str(cfg.BASE_DIR), "backups")
+BACKUP_KEEP = 30
 
 # ip → [timestamp, …] барои маҳдудкунии вуруд
 _login_hits: dict[str, list[float]] = defaultdict(list)
@@ -40,10 +47,61 @@ _login_hits: dict[str, list[float]] = defaultdict(list)
 # Аз main.py гузошта мешавад, то панел тавонад қарор қабул кунад.
 BOT = None
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 def set_bot(bot) -> None:
     global BOT
     BOT = bot
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Логин ва рамз
+# ══════════════════════════════════════════════════════════════════════════
+#  Манбаъ: аввал база (агар аз панел иваз шуда бошад), вагарна .env.
+
+_PBKDF2_ROUNDS = 240_000
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ROUNDS)
+    return f"pbkdf2_sha256${_PBKDF2_ROUNDS}${salt.hex()}${dk.hex()}"
+
+
+def _check_hash(password: str, stored: str) -> bool:
+    try:
+        algo, rounds, salt, digest = stored.split("$")
+        if algo != "pbkdf2_sha256":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(rounds))
+        return hmac.compare_digest(dk.hex(), digest)
+    except (ValueError, TypeError):
+        return False
+
+
+def _admin_login() -> str:
+    return db.get_setting("admin_login") or cfg.ADMIN_LOGIN
+
+
+def _token_version() -> str:
+    return db.get_setting("token_version", "0") or "0"
+
+
+def _verify_credentials(login: str, password: str) -> bool:
+    login_ok = hmac.compare_digest(login.encode(), _admin_login().encode())
+    stored = db.get_setting("admin_pass_hash")
+    if stored:
+        pass_ok = _check_hash(password, stored)
+    else:
+        # Рамзи холӣ = вуруди ҳама бо сатри холӣ — ҳеҷ гоҳ.
+        pass_ok = bool(cfg.ADMIN_PASS) and hmac.compare_digest(
+            password.encode(), cfg.ADMIN_PASS.encode())
+    return login_ok and pass_ok
+
+
+def _password_configured() -> bool:
+    return bool(db.get_setting("admin_pass_hash") or cfg.ADMIN_PASS)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -60,7 +118,8 @@ def _b64d(data: str) -> bytes:
 
 def _make_jwt(payload: dict) -> str:
     header = _b64e(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
-    payload = {**payload, "iat": int(time.time()), "exp": int(time.time()) + cfg.TOKEN_TTL}
+    payload = {**payload, "tv": _token_version(),
+               "iat": int(time.time()), "exp": int(time.time()) + cfg.TOKEN_TTL}
     body = _b64e(json.dumps(payload, separators=(",", ":")).encode())
     sig = hmac.new(cfg.SECRET_KEY.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
     return f"{header}.{body}.{_b64e(sig)}"
@@ -79,6 +138,8 @@ def _verify_jwt(token: str) -> dict | None:
             return None
         payload = json.loads(_b64d(body))
         if float(payload.get("exp", 0)) < time.time():
+            return None
+        if str(payload.get("tv", "0")) != _token_version():   # рамз иваз шуд
             return None
         return payload
     except Exception:
@@ -110,6 +171,13 @@ def _client_ip(request: web.Request) -> str:
     return remote
 
 
+def _rate_limited(ip: str) -> bool:
+    now = time.time()
+    hits = [t for t in _login_hits[ip] if now - t < cfg.LOGIN_WINDOW]
+    _login_hits[ip] = hits
+    return len(hits) >= cfg.LOGIN_MAX_TRIES
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  Ёрдамчиҳо
 # ══════════════════════════════════════════════════════════════════════════
@@ -129,6 +197,10 @@ def _guard(handler):
             return _err("Unauthorized", 401)
         try:
             return await handler(request)
+        except web.HTTPException:
+            raise
+        except (ValueError, TypeError) as exc:
+            return _err(f"Маълумоти нодуруст: {exc}", 400)
         except Exception as exc:                    # pragma: no cover
             log.exception("API %s: %s", request.path, exc)
             return _err("Хатои дохилии сервер", 500)
@@ -136,8 +208,78 @@ def _guard(handler):
     return wrapper
 
 
+def _date(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value if _DATE_RE.match(value) else None
+
+
+def _int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _filters(q) -> dict:
+    """Филтрҳои умумии дархостҳо аз query ё JSON."""
+    return {
+        "req_type": q.get("type") or None,
+        "status": q.get("status") or None,
+        "date_from": _date(q.get("date_from")),
+        "date_to": _date(q.get("date_to")),
+        "search": (q.get("q") or "").strip() or None,
+        "user_id": _int(q.get("user_id")) or None,
+    }
+
+
+async def _body(request: web.Request) -> dict:
+    try:
+        data = await request.json()
+    except Exception:
+        raise ValueError("JSON лозим аст")
+    if not isinstance(data, dict):
+        raise ValueError("JSON-объект лозим аст")
+    return data
+
+
+def _confirm_password(request: web.Request, data: dict) -> web.Response | None:
+    """Барои амалҳои хатарнок рамзи ҷорӣ бояд аз нав ворид шавад."""
+    ip = _client_ip(request)
+    if _rate_limited(ip):
+        return _err("Кӯшишҳо зиёданд. Пас аз чанд дақиқа кӯшиш кунед.", 429)
+    password = str(data.get("password", ""))
+    stored = db.get_setting("admin_pass_hash")
+    ok = _check_hash(password, stored) if stored else (
+        bool(cfg.ADMIN_PASS) and hmac.compare_digest(password.encode(), cfg.ADMIN_PASS.encode()))
+    if not ok:
+        _login_hits[ip].append(time.time())
+        log.warning("🔒 Рамзи нодуруст ҳангоми тасдиқи амал аз %s", ip)
+        return _err("Рамз нодуруст аст", 403)
+    return None
+
+
+def _make_backup(tag: str) -> str | None:
+    """Нусхаи худкор пеш аз ҳар нест кардан. Охирин BACKUP_KEEP нигоҳ дошта мешаванд."""
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        stamp = cfg.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(BACKUP_DIR, f"softclub_{stamp}_{tag}.db")
+        db.backup_to(path)
+        old = sorted(glob.glob(os.path.join(BACKUP_DIR, "softclub_*.db")))
+        for extra in old[:-BACKUP_KEEP]:
+            try:
+                os.remove(extra)
+            except OSError:
+                pass
+        log.info("💾 Нусхаи эҳтиётӣ: %s", path)
+        return os.path.basename(path)
+    except Exception as exc:
+        log.error("💾 Нусхаи эҳтиётӣ сохта нашуд: %s", exc)
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════════
-#  Endpoint-ҳо
+#  Endpoint-ҳо: умумӣ
 # ══════════════════════════════════════════════════════════════════════════
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -177,15 +319,10 @@ async def handle_health(request: web.Request) -> web.Response:
 
 async def handle_login(request: web.Request) -> web.Response:
     ip = _client_ip(request)
-    now = time.time()
-    hits = [t for t in _login_hits[ip] if now - t < cfg.LOGIN_WINDOW]
-    _login_hits[ip] = hits
-
-    if len(hits) >= cfg.LOGIN_MAX_TRIES:
+    if _rate_limited(ip):
         return _err("Кӯшишҳо зиёданд. Пас аз чанд дақиқа кӯшиш кунед.", 429)
 
-    if not cfg.ADMIN_PASS:
-        # Рамзи холӣ = вуруди ҳама бо сатри холӣ. Ҳеҷ гоҳ иҷозат намедиҳем.
+    if not _password_configured():
         log.error("🔒 ADMIN_PASS дар .env гузошта нашудааст — вуруд ба панел баста аст")
         return _err("Панел танзим нашудааст (ADMIN_PASS)", 503)
 
@@ -195,19 +332,69 @@ async def handle_login(request: web.Request) -> web.Response:
         return _err("Маълумоти нодуруст")
 
     login = str(data.get("login", "")).strip()
-    password = str(data.get("password", "")).strip()
+    password = str(data.get("password", ""))
 
-    ok = (hmac.compare_digest(login, cfg.ADMIN_LOGIN)
-          and hmac.compare_digest(password, cfg.ADMIN_PASS))
-
-    if not ok:
-        _login_hits[ip].append(now)
+    if not _verify_credentials(login, password):
+        _login_hits[ip].append(time.time())
         log.warning("🔒 Кӯшиши нодурусти вуруд аз %s", ip)
         return _err("Логин ё рамз нодуруст аст", 401)
 
     _login_hits.pop(ip, None)
+    log.info("🔓 Вуруд ба панел аз %s", ip)
     return _json({"token": _make_jwt({"user": login, "role": "admin"}), "user": login})
 
+
+@_guard
+async def handle_account(request: web.Request) -> web.Response:
+    return _json({
+        "login": _admin_login(),
+        "source": "panel" if db.get_setting("admin_pass_hash") else "env",
+        "changed_at": db.get_setting("admin_changed_at"),
+    })
+
+
+@_guard
+async def handle_account_update(request: web.Request) -> web.Response:
+    data = await _body(request)
+    denied = _confirm_password(request, {"password": data.get("current_password", "")})
+    if denied:
+        return denied
+
+    new_login = str(data.get("new_login", "")).strip() or _admin_login()
+    new_password = str(data.get("new_password", ""))
+
+    if not re.fullmatch(r"[A-Za-z0-9_.@\-]{3,32}", new_login):
+        return _err("Логин: 3–32 аломат (ҳарфи лотинӣ, рақам, _ . @ -)")
+    if new_password and len(new_password) < 6:
+        return _err("Рамзи нав бояд ақаллан 6 аломат бошад")
+    if new_password and new_password.isdigit() and len(new_password) < 8:
+        return _err("Рамзи танҳо рақамӣ бояд ақаллан 8 аломат бошад")
+
+    values = {
+        "admin_login": new_login,
+        "admin_changed_at": cfg.now_str(),
+        # Ҳамаи токенҳои кӯҳна (дигар телефонҳо/браузерҳо) беэътибор мешаванд
+        "token_version": secrets.token_hex(6),
+    }
+    if new_password:
+        values["admin_pass_hash"] = _hash_password(new_password)
+    elif not db.get_setting("admin_pass_hash"):
+        # Логин иваз шуд, рамз не — рамзи ҷориро (аз .env) ба база мегузаронем
+        values["admin_pass_hash"] = _hash_password(str(data.get("current_password", "")))
+
+    db.set_settings(values)
+    log.warning("🔐 Логин/рамзи панел иваз шуд (логин: %s, аз %s)", new_login, _client_ip(request))
+    return _json({
+        "ok": True,
+        "login": new_login,
+        "token": _make_jwt({"user": new_login, "role": "admin"}),
+        "message": "Маълумоти вуруд иваз шуд. Дигар дастгоҳҳо бояд аз нав ворид шаванд.",
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Endpoint-ҳо: маълумот
+# ══════════════════════════════════════════════════════════════════════════
 
 @_guard
 async def handle_dashboard(request: web.Request) -> web.Response:
@@ -220,24 +407,40 @@ async def handle_dashboard(request: web.Request) -> web.Response:
 async def handle_requests(request: web.Request) -> web.Response:
     q = request.query
     return _json(db.query_requests(
-        req_type=q.get("type") or None,
-        status=q.get("status") or None,
-        date_from=q.get("date_from") or None,
-        date_to=q.get("date_to") or None,
-        search=(q.get("q") or "").strip() or None,
-        limit=int(q.get("limit", 50) or 50),
-        offset=int(q.get("offset", 0) or 0),
+        **_filters(q),
+        limit=_int(q.get("limit"), 30) or 30,
+        offset=_int(q.get("offset"), 0),
+        sort=q.get("sort") or None,
     ))
 
 
 @_guard
+async def handle_request_one(request: web.Request) -> web.Response:
+    rec = db.get_request(_int(request.match_info["req_id"]))
+    if not rec:
+        return _err("Дархост ёфт нашуд", 404)
+    return _json(rec)
+
+
+@_guard
 async def handle_workers(request: web.Request) -> web.Response:
-    return _json(db.get_worker_stats())
+    q = request.query
+    return _json(db.get_worker_stats(_date(q.get("date_from")), _date(q.get("date_to"))))
+
+
+@_guard
+async def handle_worker_detail(request: web.Request) -> web.Response:
+    q = request.query
+    data = db.get_worker_detail(_int(request.match_info["user_id"]),
+                                _date(q.get("date_from")), _date(q.get("date_to")))
+    if not data:
+        return _err("Корманд ёфт нашуд", 404)
+    return _json(data)
 
 
 @_guard
 async def handle_stats(request: web.Request) -> web.Response:
-    days = int(request.query.get("days", 14) or 14)
+    days = _int(request.query.get("days"), 14) or 14
     return _json({
         "daily": db.get_daily_stats(days),
         "workers": db.get_worker_stats(),
@@ -246,16 +449,18 @@ async def handle_stats(request: web.Request) -> web.Response:
 
 
 @_guard
+async def handle_analytics(request: web.Request) -> web.Response:
+    q = request.query
+    return _json(db.get_analytics(_date(q.get("date_from")), _date(q.get("date_to"))))
+
+
+@_guard
 async def handle_decision(request: web.Request) -> web.Response:
     if BOT is None:
         return _err("Бот дастрас нест", 503)
 
-    try:
-        req_id = int(request.match_info["req_id"])
-        payload = await request.json()
-    except Exception:
-        return _err("Маълумоти нодуруст")
-
+    req_id = _int(request.match_info["req_id"])
+    payload = await _body(request)
     decision = payload.get("decision")
     if decision not in ("accepted", "rejected"):
         return _err("Қарори номаълум")
@@ -270,12 +475,8 @@ async def handle_message(request: web.Request) -> web.Response:
     if BOT is None:
         return _err("Бот дастрас нест", 503)
 
-    try:
-        req_id = int(request.match_info["req_id"])
-        payload = await request.json()
-    except Exception:
-        return _err("Маълумоти нодуруст")
-
+    req_id = _int(request.match_info["req_id"])
+    payload = await _body(request)
     text = str(payload.get("text", "")).strip()
     if not text:
         return _err("Матн холӣ аст")
@@ -285,15 +486,135 @@ async def handle_message(request: web.Request) -> web.Response:
     return _json({"ok": ok, "message": note}, 200 if ok else 409)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Endpoint-ҳо: нест кардан
+# ══════════════════════════════════════════════════════════════════════════
+
+@_guard
+async def handle_request_delete(request: web.Request) -> web.Response:
+    req_id = _int(request.match_info["req_id"])
+    if not db.get_request(req_id):
+        return _err("Дархост ёфт нашуд", 404)
+    removed = db.delete_requests([req_id])
+    return _json({"ok": True, "deleted": removed, "message": f"Дархости #{req_id} нест шуд"})
+
+
+@_guard
+async def handle_requests_delete(request: web.Request) -> web.Response:
+    """{"ids": [...]} — интихобшудаҳо; {"filters": {...}, "password": …} — ҳама аз рӯи филтр."""
+    data = await _body(request)
+    ids = data.get("ids")
+
+    if isinstance(ids, list) and ids:
+        ids = [_int(i) for i in ids if _int(i) > 0][:5000]
+        if len(ids) > 20:                       # нест кардани зиёд — бо рамз
+            denied = _confirm_password(request, data)
+            if denied:
+                return denied
+        backup = _make_backup("selected") if len(ids) > 1 else None
+        removed = db.delete_requests(ids)
+        return _json({"ok": True, "deleted": removed, "backup": backup,
+                      "message": f"{removed} дархост нест шуд"})
+
+    if isinstance(data.get("filters"), dict):
+        denied = _confirm_password(request, data)
+        if denied:
+            return denied
+        backup = _make_backup("filtered")
+        removed = db.delete_filtered(**_filters(data["filters"]))
+        return _json({"ok": True, "deleted": removed, "backup": backup,
+                      "message": f"{removed} дархост нест шуд"})
+
+    return _err("Чизе интихоб нашудааст")
+
+
+@_guard
+async def handle_worker_delete(request: web.Request) -> web.Response:
+    data = await _body(request)
+    denied = _confirm_password(request, data)
+    if denied:
+        return denied
+    backup = _make_backup("worker")
+    result = db.delete_worker(_int(request.match_info["user_id"]))
+    return _json({"ok": True, **result, "backup": backup,
+                  "message": f"Маълумоти корманд нест шуд ({result['requests']} дархост)"})
+
+
+@_guard
+async def handle_wipe(request: web.Request) -> web.Response:
+    data = await _body(request)
+    denied = _confirm_password(request, data)
+    if denied:
+        return denied
+    if str(data.get("confirm", "")).strip().upper() != "ТОЗА":
+        return _err("Барои тасдиқ калимаи ТОЗА-ро нависед")
+
+    scope = "all" if data.get("scope") == "all" else "requests"
+    before = _date(data.get("before"))
+    backup = _make_backup("wipe")
+    if not backup:
+        return _err("Нусхаи эҳтиётӣ сохта нашуд — тозакунӣ бекор шуд", 500)
+    counts = db.wipe(scope, before)
+    return _json({"ok": True, "counts": counts, "backup": backup,
+                  "message": f"База тоза шуд: {counts.get('requests', 0)} дархост нест шуд"})
+
+
+@_guard
+async def handle_backups(request: web.Request) -> web.Response:
+    items = []
+    for path in sorted(glob.glob(os.path.join(BACKUP_DIR, "softclub_*.db")), reverse=True):
+        try:
+            items.append({"name": os.path.basename(path), "size": os.path.getsize(path),
+                          "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))})
+        except OSError:
+            continue
+    return _json({"items": items, "keep": BACKUP_KEEP})
+
+
+@_guard
+async def handle_backup_download(request: web.Request) -> web.Response:
+    """Нусхаи ҳозираи база барои боргирӣ."""
+    buf_path = os.path.join(BACKUP_DIR, ".download.db")
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    await asyncio.to_thread(db.backup_to, buf_path)
+    with open(buf_path, "rb") as fh:
+        body = fh.read()
+    try:
+        os.remove(buf_path)
+    except OSError:
+        pass
+    return web.Response(body=body, headers={
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": f'attachment; filename="softclub-{cfg.today_str()}.db"',
+        "Cache-Control": "no-store",
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Экспорт ва статика
+# ══════════════════════════════════════════════════════════════════════════
+
+_TYPE_TG = {"late": "Дер мекунад", "absent": "Намеояд",
+            "at_work_waiting": "Ҷавоб мепурсад", "leaving_early": "Барвақт меравад"}
+_STATUS_TG = {"pending": "Дар интизорӣ", "accepted": "Иҷозат", "rejected": "Рад",
+              "cancelled": "Бекор"}
+
+
 @_guard
 async def handle_export(request: web.Request) -> web.Response:
-    rows = db.export_rows()
+    rows = db.export_rows(**_filters(request.query))
     buf = io.StringIO()
-    columns = ["id", "user_id", "name", "type", "reason", "minutes", "status",
-               "worker_confirmed", "decided_by", "created_at", "deadline_at"]
-    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore", lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(rows)
+    writer = csv.writer(buf, lineterminator="\n", delimiter=";")
+    writer.writerow(["№", "Корманд", "Навъ", "Сабаб", "Дақиқа", "Вазъият",
+                     "Қарор кард", "Тасдиқи корманд", "Сана", "Мӯҳлат"])
+    for r in rows:
+        writer.writerow([
+            r["id"], r["name"], _TYPE_TG.get(r["type"], r["type"]), r["reason"],
+            r["minutes"] or "", _STATUS_TG.get(r["status"], r["status"]),
+            r.get("decided_by") or "",
+            {"yes": "Бале", "no": "Не"}.get(r.get("worker_confirmed") or "", ""),
+            r["created_at"], r.get("deadline_at") or "",
+        ])
 
     body = "﻿" + buf.getvalue()          # BOM — то Excel кириллро дуруст кушояд
     return web.Response(
@@ -301,6 +622,7 @@ async def handle_export(request: web.Request) -> web.Response:
         headers={
             "Content-Type": "text/csv; charset=utf-8",
             "Content-Disposition": f'attachment; filename="softclub-{cfg.today_str()}.csv"',
+            "Cache-Control": "no-store",
         },
     )
 
@@ -327,6 +649,8 @@ async def security_headers(request: web.Request, handler):
 
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
+    if request.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -335,18 +659,33 @@ async def security_headers(request: web.Request, handler):
 # ══════════════════════════════════════════════════════════════════════════
 
 def build_app() -> web.Application:
-    app = web.Application(middlewares=[security_headers])
+    app = web.Application(middlewares=[security_headers], client_max_size=2 * 1024 * 1024)
     r = app.router
 
     r.add_get("/api/health", handle_health)
     r.add_post("/api/login", handle_login)
+    r.add_get("/api/account", handle_account)
+    r.add_post("/api/account", handle_account_update)
+
     r.add_get("/api/dashboard", handle_dashboard)
-    r.add_get("/api/requests", handle_requests)
-    r.add_get("/api/workers", handle_workers)
+    r.add_get("/api/analytics", handle_analytics)
     r.add_get("/api/stats", handle_stats)
     r.add_get("/api/export.csv", handle_export)
-    r.add_post("/api/requests/{req_id}/decision", handle_decision)
-    r.add_post("/api/requests/{req_id}/message", handle_message)
+
+    r.add_get("/api/requests", handle_requests)
+    r.add_post("/api/requests/delete", handle_requests_delete)
+    r.add_get("/api/requests/{req_id:\\d+}", handle_request_one)
+    r.add_delete("/api/requests/{req_id:\\d+}", handle_request_delete)
+    r.add_post("/api/requests/{req_id:\\d+}/decision", handle_decision)
+    r.add_post("/api/requests/{req_id:\\d+}/message", handle_message)
+
+    r.add_get("/api/workers", handle_workers)
+    r.add_get("/api/workers/{user_id:\\d+}", handle_worker_detail)
+    r.add_post("/api/workers/{user_id:\\d+}/delete", handle_worker_delete)
+
+    r.add_post("/api/wipe", handle_wipe)
+    r.add_get("/api/backups", handle_backups)
+    r.add_get("/api/backup.db", handle_backup_download)
 
     r.add_get("/", handle_index)
     r.add_get("/index.html", handle_index)

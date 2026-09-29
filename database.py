@@ -123,6 +123,12 @@ CREATE TABLE IF NOT EXISTS employees (
     first_seen TEXT NOT NULL,
     last_seen  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 # Сутунҳое, ки метавонанд дар базаи кӯҳна набошанд.
@@ -575,9 +581,15 @@ def query_requests(
     search: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    user_id: int | None = None,
+    sort: str | None = None,
 ) -> dict:
     where = ["1=1"]
     params: list[Any] = []
+
+    if user_id:
+        where.append("user_id = ?")
+        params.append(int(user_id))
 
     if req_type in REQ_TYPES:
         where.append("type = ?")
@@ -605,18 +617,60 @@ def query_requests(
             f"SELECT COUNT(*) c FROM requests WHERE {clause}", params
         ).fetchone()["c"]
         items = _rows(conn.execute(
-            f"SELECT * FROM requests WHERE {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM requests WHERE {clause} ORDER BY {_SORTS.get(sort or '', 'id DESC')} "
+            "LIMIT ? OFFSET ?",
             params + [limit, offset],
         ))
 
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
-def get_worker_stats() -> list[dict]:
+_SORTS = {
+    "new": "id DESC",
+    "old": "id ASC",
+    "minutes": "minutes DESC, id DESC",
+    "name": "name COLLATE NOCASE, id DESC",
+}
+
+
+def _filter_clause(
+    req_type: str | None = None,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    search: str | None = None,
+    user_id: int | None = None,
+) -> tuple[str, list[Any]]:
+    """Ҳамон филтрҳое, ки query_requests дорад — барои экспорт ва нест кардан."""
+    where = ["1=1"]
+    params: list[Any] = []
+    if user_id:
+        where.append("user_id = ?")
+        params.append(int(user_id))
+    if req_type in REQ_TYPES:
+        where.append("type = ?")
+        params.append(req_type)
+    if status in REQ_STATUSES:
+        where.append("status = ?")
+        params.append(status)
+    if date_from:
+        where.append("created_at >= ?")
+        params.append(f"{date_from} 00:00:00")
+    if date_to:
+        where.append("created_at <= ?")
+        params.append(f"{date_to} 23:59:59")
+    if search:
+        where.append("(name LIKE ? OR reason LIKE ?)")
+        params += [f"%{search}%", f"%{search}%"]
+    return " AND ".join(where), params
+
+
+def get_worker_stats(date_from: str | None = None, date_to: str | None = None) -> list[dict]:
     """Гурӯҳбандӣ аз рӯи user_id (на ном) — тағйири ном такрор насозад."""
+    clause, params = _range_clause(date_from, date_to, "r.created_at")
     with _ro() as conn:
         rows = _rows(conn.execute(
-            """
+            f"""
             SELECT r.user_id,
                    COALESCE(e.name, MAX(r.name))                    AS name,
                    COUNT(*)                                         AS total,
@@ -629,13 +683,33 @@ def get_worker_stats() -> list[dict]:
                    COALESCE(SUM(r.status = 'pending'), 0)           AS pending,
                    COALESCE(SUM(r.status = 'cancelled'), 0)         AS cancelled,
                    COALESCE(SUM(r.minutes), 0)                      AS total_minutes,
-                   MAX(r.created_at)                                AS last_at
+                   MAX(r.created_at)                                AS last_at,
+                   COALESCE(SUM(CASE WHEN r.type = 'late' THEN r.minutes END), 0) AS late_minutes,
+                   e.username                                       AS username
               FROM requests r
               LEFT JOIN employees e ON e.user_id = r.user_id
+             WHERE {clause}
              GROUP BY r.user_id
              ORDER BY total DESC, name COLLATE NOCASE
-            """
+            """,
+            params,
         ))
+        top = {}
+        for r in conn.execute(
+            f"""
+            SELECT r.user_id, r.reason, COUNT(*) c FROM requests r
+             WHERE {clause} GROUP BY r.user_id, r.reason ORDER BY c DESC
+            """,
+            params,
+        ):
+            top.setdefault(r["user_id"], (r["reason"], r["c"]))
+
+    for row in rows:
+        decided = row["accepted"] + row["rejected"]
+        row["accept_rate"] = round(100 * row["accepted"] / decided) if decided else None
+        reason = top.get(row["user_id"])
+        row["top_reason"] = reason[0] if reason else None
+        row["top_reason_count"] = reason[1] if reason else 0
     return rows
 
 
@@ -669,6 +743,326 @@ def get_daily_stats(days: int = 7) -> list[dict]:
     return list(buckets.values())
 
 
-def export_rows() -> list[dict]:
+def export_rows(**filters) -> list[dict]:
+    clause, params = _filter_clause(**filters)
     with _ro() as conn:
-        return _rows(conn.execute("SELECT * FROM requests ORDER BY id DESC"))
+        return _rows(conn.execute(f"SELECT * FROM requests WHERE {clause} ORDER BY id DESC", params))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+#  Танзимот (логин/рамзи панел ва ғ.)
+# ──────────────────────────────────────────────────────────────────────────
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with _ro() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_settings(values: dict[str, str]) -> None:
+    stamp = cfg.now_str()
+    with _tx() as conn:
+        for key, value in values.items():
+            conn.execute(
+                """
+                INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                               updated_at = excluded.updated_at
+                """,
+                (key, str(value), stamp),
+            )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+#  Нест кардан ва нусхаи эҳтиётӣ
+# ──────────────────────────────────────────────────────────────────────────
+
+def _chunks(ids: list[int], size: int = 500) -> Iterator[list[int]]:
+    for i in range(0, len(ids), size):
+        yield ids[i:i + size]
+
+
+def delete_requests(ids: Iterable[int]) -> int:
+    """Дархостҳо ва санҷишҳои омадани онҳоро нест мекунад."""
+    ids = sorted({int(i) for i in ids})
+    if not ids:
+        return 0
+    removed = 0
+    with _tx() as conn:
+        for part in _chunks(ids):
+            marks = ",".join("?" * len(part))
+            conn.execute(f"DELETE FROM arrival_checks WHERE request_id IN ({marks})", part)
+            removed += conn.execute(f"DELETE FROM requests WHERE id IN ({marks})", part).rowcount or 0
+    log.warning("🗑 Аз панел нест шуд: %d дархост (%s)", removed,
+                ", ".join(f"#{i}" for i in ids[:20]) + (" …" if len(ids) > 20 else ""))
+    return removed
+
+
+def delete_filtered(**filters) -> int:
+    clause, params = _filter_clause(**filters)
+    with _ro() as conn:
+        ids = [r["id"] for r in conn.execute(f"SELECT id FROM requests WHERE {clause}", params)]
+    return delete_requests(ids)
+
+
+def delete_worker(user_id: int) -> dict:
+    """Ҳамаи маълумоти як корманд."""
+    with _ro() as conn:
+        ids = [r["id"] for r in conn.execute("SELECT id FROM requests WHERE user_id = ?", (user_id,))]
+    removed = delete_requests(ids)
+    with _tx() as conn:
+        conn.execute("DELETE FROM arrival_checks WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
+        emp = conn.execute("DELETE FROM employees WHERE user_id = ?", (user_id,)).rowcount or 0
+    log.warning("🗑 Маълумоти корманд %s нест шуд (%d дархост)", user_id, removed)
+    return {"requests": removed, "employee": emp}
+
+
+def wipe(scope: str = "requests", before: str | None = None) -> dict:
+    """
+    scope="requests" — ҳамаи дархостҳо (ё танҳо то санаи `before`);
+    scope="all"      — ғайр аз ин кормандон ва ҳолатҳо; рақамгузорӣ аз #1.
+    Танзимот (логин/рамз) ҳеҷ гоҳ нест намешаванд.
+    """
+    counts = {}
+    with _tx() as conn:
+        if before:
+            stamp = f"{before} 23:59:59"
+            conn.execute(
+                "DELETE FROM arrival_checks WHERE request_id IN "
+                "(SELECT id FROM requests WHERE created_at <= ?)", (stamp,))
+            counts["requests"] = conn.execute(
+                "DELETE FROM requests WHERE created_at <= ?", (stamp,)).rowcount or 0
+        else:
+            conn.execute("DELETE FROM arrival_checks")
+            counts["requests"] = conn.execute("DELETE FROM requests").rowcount or 0
+            if scope == "all":
+                counts["employees"] = conn.execute("DELETE FROM employees").rowcount or 0
+                conn.execute("DELETE FROM user_states")
+                conn.execute(
+                    "DELETE FROM sqlite_sequence WHERE name IN ('requests', 'arrival_checks')")
+    log.warning("🧨 Тозакунии база аз панел: scope=%s before=%s → %s", scope, before, counts)
+    return counts
+
+
+def backup_to(path: str) -> str:
+    """Нусхаи пурраи база (SQLite backup API — ҳатто ҳангоми кор бехатар)."""
+    src = _connect()
+    try:
+        dst = sqlite3.connect(path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return path
+
+
+# ──────────────────────────────────────────────────────────────────────────
+#  Таҳлил (саҳифаи «Омор» ва тафсилоти корманд)
+# ──────────────────────────────────────────────────────────────────────────
+
+def _range_clause(date_from: str | None, date_to: str | None,
+                  col: str = "created_at") -> tuple[str, list[Any]]:
+    where, params = ["1=1"], []
+    if date_from:
+        where.append(f"{col} >= ?")
+        params.append(f"{date_from} 00:00:00")
+    if date_to:
+        where.append(f"{col} <= ?")
+        params.append(f"{date_to} 23:59:59")
+    return " AND ".join(where), params
+
+
+def _normalize_reason(text: str | None) -> str:
+    return " ".join(str(text or "").split()).strip(" .,!").capitalize() or "—"
+
+
+def _reason_table(rows) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for r in rows:
+        key = _normalize_reason(r["reason"])
+        item = merged.setdefault(key, {"reason": key, "count": 0, "minutes": 0, "by_type": {}})
+        item["count"] += r["c"]
+        item["minutes"] += r["m"] or 0
+        item["by_type"][r["type"]] = item["by_type"].get(r["type"], 0) + r["c"]
+    return sorted(merged.values(), key=lambda x: (-x["count"], x["reason"]))
+
+
+def _period_summary(conn, clause: str, params: list[Any]) -> dict:
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*)                                          AS total,
+               COUNT(DISTINCT user_id)                           AS people,
+               COALESCE(SUM(status = 'accepted'), 0)             AS accepted,
+               COALESCE(SUM(status = 'rejected'), 0)             AS rejected,
+               COALESCE(SUM(status = 'pending'), 0)              AS pending,
+               COALESCE(SUM(status = 'cancelled'), 0)            AS cancelled,
+               COALESCE(SUM(minutes), 0)                         AS minutes,
+               COALESCE(SUM(CASE WHEN type = 'late' THEN minutes END), 0) AS late_minutes,
+               COALESCE(ROUND(AVG(NULLIF(minutes, 0))), 0)       AS avg_minutes,
+               COALESCE(SUM(worker_confirmed = 'yes'), 0)        AS confirmed_yes,
+               COALESCE(SUM(worker_confirmed = 'no'), 0)         AS confirmed_no,
+               ROUND(AVG(CASE WHEN decided_at IS NOT NULL AND status IN ('accepted','rejected')
+                              THEN (julianday(decided_at) - julianday(created_at)) * 1440 END), 1)
+                                                                 AS avg_response_min
+          FROM requests WHERE {clause}
+        """,
+        params,
+    ).fetchone()
+    data = dict(row)
+    decided = data["accepted"] + data["rejected"]
+    data["accept_rate"] = round(100 * data["accepted"] / decided) if decided else None
+    return data
+
+
+def get_analytics(date_from: str | None = None, date_to: str | None = None) -> dict:
+    clause, params = _range_clause(date_from, date_to)
+
+    with _ro() as conn:
+        summary = _period_summary(conn, clause, params)
+
+        by_type = {t: {"count": 0, "minutes": 0, "accepted": 0} for t in REQ_TYPES}
+        for r in conn.execute(
+            f"""SELECT type, COUNT(*) c, COALESCE(SUM(minutes),0) m,
+                       COALESCE(SUM(status='accepted'),0) a
+                  FROM requests WHERE {clause} GROUP BY type""", params):
+            by_type[r["type"]] = {"count": r["c"], "minutes": r["m"], "accepted": r["a"]}
+
+        by_status = {s: 0 for s in REQ_STATUSES}
+        for r in conn.execute(
+            f"SELECT status, COUNT(*) c FROM requests WHERE {clause} GROUP BY status", params):
+            by_status[r["status"]] = r["c"]
+
+        reasons = _reason_table(conn.execute(
+            f"""SELECT reason, type, COUNT(*) c, COALESCE(SUM(minutes),0) m
+                  FROM requests WHERE {clause} GROUP BY reason, type""", params))
+
+        weekday = [0] * 7                                  # 0 = душанбе
+        for r in conn.execute(
+            f"""SELECT CAST(strftime('%w', created_at) AS INTEGER) d, COUNT(*) c
+                  FROM requests WHERE {clause} GROUP BY d""", params):
+            weekday[(r["d"] + 6) % 7] = r["c"]
+
+        hours = [0] * 24
+        for r in conn.execute(
+            f"""SELECT CAST(strftime('%H', created_at) AS INTEGER) h, COUNT(*) c
+                  FROM requests WHERE {clause} GROUP BY h""", params):
+            if r["h"] is not None and 0 <= r["h"] < 24:
+                hours[r["h"]] = r["c"]
+
+        day_rows = conn.execute(
+            f"""SELECT substr(created_at, 1, 10) d, type, COUNT(*) c
+                  FROM requests WHERE {clause} GROUP BY d, type ORDER BY d""", params).fetchall()
+
+        deciders = _rows(conn.execute(
+            f"""SELECT COALESCE(decided_by, '—') AS name, COUNT(*) AS total,
+                       COALESCE(SUM(status='accepted'),0) AS accepted,
+                       COALESCE(SUM(status='rejected'),0) AS rejected
+                  FROM requests WHERE {clause} AND status IN ('accepted','rejected')
+                 GROUP BY decided_by ORDER BY total DESC LIMIT 10""", params))
+
+        arrivals = dict(conn.execute(
+            f"""SELECT COALESCE(SUM(ac.status='arrived'),0) arrived,
+                       COALESCE(SUM(ac.status='delayed'),0) delayed,
+                       COALESCE(SUM(ac.status='pending'),0) waiting
+                  FROM arrival_checks ac JOIN requests r ON r.id = ac.request_id
+                 WHERE {clause.replace('created_at', 'r.created_at')}""", params).fetchone())
+
+        span = conn.execute(
+            f"SELECT MIN(substr(created_at,1,10)) a, MAX(substr(created_at,1,10)) b "
+            f"FROM requests WHERE {clause}", params).fetchone()
+
+    daily = _daily_series(day_rows, date_from or span["a"], date_to or span["b"])
+
+    return {
+        "range": {"from": date_from, "to": date_to,
+                  "first": span["a"], "last": span["b"]},
+        "summary": summary,
+        "by_type": by_type,
+        "by_status": by_status,
+        "reasons": reasons[:40],
+        "weekday": weekday,
+        "hours": hours,
+        "daily": daily,
+        "deciders": deciders,
+        "arrivals": arrivals,
+        "workers": get_worker_stats(date_from, date_to),
+    }
+
+
+def _daily_series(rows, start: str | None, end: str | None) -> list[dict]:
+    from datetime import datetime as _dt
+    if not start or not end:
+        return []
+    try:
+        a = _dt.strptime(start[:10], "%Y-%m-%d")
+        b = _dt.strptime(end[:10], "%Y-%m-%d")
+    except ValueError:
+        return []
+    if b < a:
+        a, b = b, a
+    if (b - a).days > 366:                          # ҳадди аксар як сол
+        a = b - timedelta(days=366)
+    buckets: dict[str, dict] = {}
+    d = a
+    while d <= b:
+        key = d.strftime("%Y-%m-%d")
+        buckets[key] = {"date": key, "count": 0, "by_type": {}}
+        d += timedelta(days=1)
+    for r in rows:
+        item = buckets.get(r["d"])
+        if item is not None:
+            item["count"] += r["c"]
+            item["by_type"][r["type"]] = item["by_type"].get(r["type"], 0) + r["c"]
+    return list(buckets.values())
+
+
+def get_worker_detail(user_id: int, date_from: str | None = None,
+                      date_to: str | None = None) -> Optional[dict]:
+    clause, params = _range_clause(date_from, date_to)
+    clause = f"user_id = ? AND {clause}"
+    params = [int(user_id)] + params
+
+    with _ro() as conn:
+        emp = conn.execute("SELECT * FROM employees WHERE user_id = ?", (user_id,)).fetchone()
+        any_req = conn.execute(
+            "SELECT name FROM requests WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (user_id,)).fetchone()
+        if not emp and not any_req:
+            return None
+
+        summary = _period_summary(conn, clause, params)
+        by_type = {t: {"count": 0, "minutes": 0} for t in REQ_TYPES}
+        for r in conn.execute(
+            f"""SELECT type, COUNT(*) c, COALESCE(SUM(minutes),0) m
+                  FROM requests WHERE {clause} GROUP BY type""", params):
+            by_type[r["type"]] = {"count": r["c"], "minutes": r["m"]}
+        reasons = _reason_table(conn.execute(
+            f"""SELECT reason, type, COUNT(*) c, COALESCE(SUM(minutes),0) m
+                  FROM requests WHERE {clause} GROUP BY reason, type""", params))
+        weekday = [0] * 7
+        for r in conn.execute(
+            f"""SELECT CAST(strftime('%w', created_at) AS INTEGER) d, COUNT(*) c
+                  FROM requests WHERE {clause} GROUP BY d""", params):
+            weekday[(r["d"] + 6) % 7] = r["c"]
+        items = _rows(conn.execute(
+            f"SELECT * FROM requests WHERE {clause} ORDER BY id DESC LIMIT 300", params))
+        delays = conn.execute(
+            "SELECT COUNT(*) c FROM arrival_checks WHERE user_id = ? AND status = 'delayed'",
+            (user_id,)).fetchone()["c"]
+
+    return {
+        "user_id": int(user_id),
+        "name": emp["name"] if emp else any_req["name"],
+        "username": emp["username"] if emp else None,
+        "first_seen": emp["first_seen"] if emp else None,
+        "last_seen": emp["last_seen"] if emp else None,
+        "summary": summary,
+        "by_type": by_type,
+        "reasons": reasons,
+        "weekday": weekday,
+        "extra_delays": delays,
+        "items": items,
+    }

@@ -17,7 +17,7 @@
 | `admin_server.py` | aiohttp API + статикаи панел |
 | `main.py` | Оғоз, назорати зерсистемаҳо, log |
 | `deploy/` | systemd watchdog (`hrcontrol-watchdog.*`) ва `install.sh` |
-| `tests/` | Санҷишҳои офлайн: `python tests/test_resilience.py` |
+| `tests/` | Санҷишҳои офлайн: `python tests/test_resilience.py`, `python tests/test_admin_api.py` |
 | `admin_panel/` | Панели веб (HTML/CSS/JS, **бе ягон китобхонаи беруна**) |
 
 ---
@@ -93,10 +93,50 @@ curl -s "localhost:8901/api/health?strict=1"  # + polling-и Telegram зинда
 
 ---
 
+## Панели маъмурият (v3.2)
+
+Аввал барои телефон сохта шудааст (Telegram Mini App); дар компютер — менюи паҳлӯ.
+
+| Бахш | Имкониятҳо |
+|---|---|
+| **Асосӣ** | Имрӯз / интизори қарор / ҳафта / моҳ; дархостҳои интизор бо тугмаҳои «Иҷозат / Рад»; графики 7 рӯз |
+| **Дархостҳо** | Ҷустуҷӯ; филтр аз рӯи навъ, вазъият, давра (имрӯз, 7/30 рӯз, моҳ, санаҳо), корманд; тартиб; CSV бо ҳамон филтрҳо; интихоб ва нест кардани якчанд; нест кардани ҳамаи ёфтшудаҳо |
+| **Кормандон** | Рейтинг бо давра ва тартиб (бештар дер, дақиқаҳои дерӣ, …); тафсилот: сабабҳо, навъҳо, рӯзҳои ҳафта, ҳамаи дархостҳо, нест кардани маълумоти корманд |
+| **Омор** | Хулосаҳои худкор, % иҷозат, вақти миёнаи ҷавоб, соатҳои дерӣ, навъҳо, қарорҳо, динамика, сабабҳои асосӣ, рӯзҳо ва соатҳо, рейтинг, кӣ қарор кард |
+| **Танзимот** | Иваз кардани логин ва рамз (PBKDF2, сессияҳои кӯҳна беэътибор мешаванд); боргирии нусхаи база; CSV; тозакунии база (кӯҳнаҳо / ҳамаи дархостҳо / пурра) |
+
+Ҳар нест кардан (ба ғайр аз як дархост) пеш аз иҷро **нусхаи эҳтиётии худкор** месозад:
+`~/Hrcontrol/backups/` (30-тои охирин). Амалҳои хатарнок рамзро аз нав талаб мекунанд.
+
+Логин/рамзе, ки аз панел иваз шудааст, дар база (`settings`) нигоҳ дошта мешавад ва аз
+`.env` афзалият дорад. Агар рамз фаромӯш шавад:
+
+```bash
+cd ~/Hrcontrol && .venv/bin/python3 -c "import sqlite3; c=sqlite3.connect('softclub.db'); c.execute(\"DELETE FROM settings WHERE key IN ('admin_login','admin_pass_hash')\"); c.commit()"
+# Акнун боз ADMIN_LOGIN / ADMIN_PASS аз .env кор мекунанд (restart лозим нест)
+```
+
+---
+
 ## API
 
 | Метод | Роҳ | Авторизатсия |
 |---|---|---|
+| GET | `/api/health` (`?strict=1` — бо санҷиши polling) | не |
+| POST | `/api/login` | не (маҳдудкунӣ: 8 кӯшиш / 5 дақ) |
+| GET / POST | `/api/account` — логин/рамз (`current_password`, `new_login`, `new_password`) | Bearer |
+| GET | `/api/dashboard` | Bearer |
+| GET | `/api/analytics?date_from&date_to` | Bearer |
+| GET | `/api/requests?type&status&date_from&date_to&q&user_id&sort&limit&offset` | Bearer |
+| GET / DELETE | `/api/requests/{id}` | Bearer |
+| POST | `/api/requests/delete` — `{ids}` ё `{filters, password}` | Bearer (+ рамз) |
+| POST | `/api/requests/{id}/decision`, `/api/requests/{id}/message` | Bearer |
+| GET | `/api/workers?date_from&date_to`, `/api/workers/{user_id}` | Bearer |
+| POST | `/api/workers/{user_id}/delete` — `{password}` | Bearer + рамз |
+| POST | `/api/wipe` — `{password, confirm:"ТОЗА", scope:"requests"\|"all", before?}` | Bearer + рамз |
+| GET | `/api/backups`, `/api/backup.db`, `/api/export.csv?…филтрҳо` | Bearer ё `?token=` |
+
+---|---|---|
 | GET | `/api/health` (`?strict=1` — бо санҷиши polling) | не |
 | POST | `/api/login` | не (маҳдудкунӣ: 8 кӯшиш / 5 дақ) |
 | GET | `/api/dashboard` | Bearer |

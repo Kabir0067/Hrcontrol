@@ -19,8 +19,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 APP_NAME = "SoftClub HR Control"
-VERSION = "3.1.0"
-BUILD = "2026092901"          # барои cache-busting дар панел
+VERSION = "3.2.0"
+BUILD = "2026092902"          # барои cache-busting дар панел
 
 
 # ──────────────────────────────────────────────────────────────────────────
