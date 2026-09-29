@@ -1,0 +1,28 @@
+[Unit]
+Description=SoftClub HR Control — Telegram bot + admin panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kabir0067
+WorkingDirectory=/home/kabir0067/Hrcontrol
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/kabir0067/Hrcontrol/.venv/bin/python3 main.py
+
+# Ҳеҷ гоҳ намемирад: ҳар афтиш → аз нав
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Хомӯшшавии осоишта (main.py SIGTERM-ро мегирад)
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hrcontrol
+
+[Install]
+WantedBy=multi-user.target

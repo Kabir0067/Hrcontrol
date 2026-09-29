@@ -1,0 +1,17 @@
+# Secrets / runtime state — never commit
+.env
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+bot.log
+bot.log.*
+*.log
+backup_*/
+.maintenance
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
