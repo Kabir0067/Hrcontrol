@@ -84,7 +84,7 @@ for t in test_resilience test_attendance test_admin_api; do .venv/bin/python tes
 
 ```bash
 # Аз компютер: bundle-и ҳамон commit-е, ки дар GitHub аст
-git bundle create hr.bundle main
+git bundle create hr.bundle HEAD main
 scp hr.bundle kabir0067@157.180.29.248:/tmp/
 ssh kabir0067@157.180.29.248 'sudo hrcontrol-deploy /tmp/hr.bundle'
 

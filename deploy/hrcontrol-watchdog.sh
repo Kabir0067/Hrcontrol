@@ -55,7 +55,7 @@ fi
 if [ ! -f "$CODE/main.py" ] && [ -d "$REPO" ]; then
     rev=$(git -C "$REPO" rev-parse -q --verify refs/deployed || git -C "$REPO" rev-parse main)
     rm -rf "$CODE.restore"
-    if git clone -q "$REPO" "$CODE.restore" && git -C "$CODE.restore" reset -q --hard "$rev"; then
+    if git clone -q -b main "$REPO" "$CODE.restore" && git -C "$CODE.restore" reset -q --hard "$rev"; then
         [ -e "$CODE/.venv" ] && mv "$CODE/.venv" "$CODE.restore/.venv"
         [ -e "$CODE" ] && mv "$CODE" "$CODE.broken.$(date +%s)"
         mv "$CODE.restore" "$CODE"

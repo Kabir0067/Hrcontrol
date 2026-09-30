@@ -63,6 +63,7 @@ elif [ -f "$KEY" ] && git -C "$REPO" fetch -q "$GITHUB" "+refs/heads/*:refs/head
 else
     log "GitHub дастрас нест — версияи охирини сейф истифода мешавад"
 fi
+git -C "$REPO" symbolic-ref HEAD "refs/heads/$BRANCH"
 NEW=$(git -C "$REPO" rev-parse "$BRANCH")
 
 # ── 3. код ─────────────────────────────────────────────────────────
