@@ -860,3 +860,23 @@ td.m-off { background-image: repeating-linear-gradient(135deg, transparent 0 5px
   .kpi__ico { display: none; }
   .kpi__label { white-space: normal; }
 }
+
+/* ── Тоза кардани база: дар телефон — зери ҳам, дар компютер — паҳлӯи ҳам ── */
+.danger-note { margin: 8px 16px 4px; color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.danger-list { display: flex; flex-direction: column; }
+.danger-item { display: grid; gap: 10px; padding: 14px 16px; }
+.danger-item + .danger-item { border-top: 1px solid var(--border); }
+.danger-item__text { min-width: 0; }
+.danger-item__text b { display: block; font-size: 14.5px; font-weight: 650; }
+.danger-item__text small { display: block; margin-top: 2px; color: var(--text-3); font-size: 13px; line-height: 1.4; }
+.danger-item__action { display: flex; gap: 8px; min-width: 0; }
+.danger-item__action .input { flex: 1; min-width: 0; }
+.danger-item__action .btn { flex-shrink: 0; }
+@media (max-width: 699px) {
+  .danger-item__action > .btn:only-child { width: 100%; }
+}
+@media (min-width: 700px) {
+  .danger-item { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+  .danger-item__action { justify-content: flex-end; }
+  .danger-item__action .input { width: 180px; flex: none; }
+}

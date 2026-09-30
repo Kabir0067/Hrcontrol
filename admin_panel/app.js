@@ -2098,18 +2098,29 @@ async function initSettings() {
 
       <div class="card danger-zone span-2">
         <div class="card__head"><h2>Тоза кардани база</h2></div>
-        <div class="card__body stack">
-          <p class="sheet__text">Пеш аз ҳар тозакунӣ нусхаи эҳтиётии база худкор сохта мешавад. Логин, рамз ва вақти корӣ нест намешаванд.</p>
-          <div class="setting" style="padding:0;flex-wrap:wrap">
-            <div class="setting__text"><b>Маълумоти кӯҳна</b><small>Дархостҳо ва давомот то санаи интихобшуда (бо ҳамон рӯз)</small></div>
-            <div class="row-flex" style="flex:1 1 260px;flex-wrap:nowrap">
+        <p class="danger-note">Пеш аз ҳар тозакунӣ нусхаи эҳтиётии база худкор сохта мешавад. Логин, рамз ва вақти корӣ нест намешаванд.</p>
+        <div class="danger-list">
+          <div class="danger-item">
+            <div class="danger-item__text"><b>Маълумоти кӯҳна</b>
+              <small>Дархостҳо ва давомот то санаи интихобшуда (бо ҳамон рӯз)</small></div>
+            <div class="danger-item__action">
               <input type="date" class="input" id="wipe-before" max="${todayYmd()}" aria-label="То сана">
               <button class="btn btn--soft-danger" id="wipe-old">Нест кардан</button>
             </div>
           </div>
-          <div class="grid grid-2">
-            <button class="btn btn--soft-danger btn--block" id="wipe-req">${ICON.trash} Ҳамаи дархостҳо ва давомот</button>
-            <button class="btn btn--danger btn--block" id="wipe-all">${ICON.alert} Тозакунии пурра (бо кормандон)</button>
+          <div class="danger-item">
+            <div class="danger-item__text"><b>Ҳамаи дархостҳо ва давомот</b>
+              <small>Рӯйхати кормандон ва танзимот мемонанд</small></div>
+            <div class="danger-item__action">
+              <button class="btn btn--soft-danger" id="wipe-req">${ICON.trash} Нест кардан</button>
+            </div>
+          </div>
+          <div class="danger-item">
+            <div class="danger-item__text"><b>Тозакунии пурра</b>
+              <small>Ҳамаи маълумот ва рӯйхати кормандон; рақамгузорӣ аз #1 сар мешавад</small></div>
+            <div class="danger-item__action">
+              <button class="btn btn--danger" id="wipe-all">${ICON.alert} Тоза кардан</button>
+            </div>
           </div>
         </div>
       </div>
