@@ -880,3 +880,26 @@ td.m-off { background-image: repeating-linear-gradient(135deg, transparent 0 5px
   .danger-item__action { justify-content: flex-end; }
   .danger-item__action .input { width: 180px; flex: none; }
 }
+
+/* ── Имтиёзи дер омадан: соатҳои аниқ ── */
+.gracechips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 560px) { .gracechips { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.gracechips button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 9px 4px;
+  border-radius: 11px; border: 1.5px solid var(--border-2); background: var(--surface); color: var(--text-2);
+}
+.gracechips b { font-size: 16px; font-weight: 750; color: var(--text); font-variant-numeric: tabular-nums; }
+.gracechips small { font-size: 11.5px; color: var(--text-3); }
+.gracechips button.is-on { border-color: var(--brand); background: var(--brand-soft); }
+.gracechips button.is-on b, .gracechips button.is-on small { color: var(--brand-text); }
+.grace-explain {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px;
+  background: var(--surface-2); font-size: 14px; color: var(--text-2);
+}
+.grace-explain p { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.grace-explain .dot { flex-shrink: 0; transform: translateY(-1px); }
+/* Рӯзҳои ҳафта: ҳамеша дар як сатр */
+.daychips { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); max-width: 420px; }
+.daychips button { width: auto; }
+.grace-explain b { color: var(--text); }
+

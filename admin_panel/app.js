@@ -287,6 +287,14 @@ function workMonth(offset = 0) {
   if (em > 12) { em = 1; ey += 1; }
   return { key: `${yy}-${p2(mm)}`, start: `${yy}-${p2(mm)}-05`, end: `${ey}-${p2(em)}-04` };
 }
+/** «08:30» + 10 → «08:40» */
+function addMin(hhmm, n) {
+  const [h, m] = String(hhmm || '00:00').split(':').map(Number);
+  const t = ((h * 60 + m + Number(n || 0)) % 1440 + 1440) % 1440;
+  return `${p2(Math.floor(t / 60))}:${p2(t % 60)}`;
+}
+/** То кадом соат «сари вақт» ҳисоб мешавад (бо ҳамон дақиқа). */
+const onTimeUntil = (sch) => addMin(sch.time, sch.grace);
 function monthTitle(key) { const [y, m] = key.split('-').map(Number); return `${cap(MONTHS[m - 1])} ${y}`; }
 const rangeText = (a, b) => `${fmtDateShort(a)} – ${fmtDateShort(b)}`;
 
@@ -930,7 +938,7 @@ function scheduleBar(sch) {
   return `<div class="card"><div class="schedule-bar">
     <div class="schedule-bar__ico">${ICON.clock}</div>
     <div class="schedule-bar__text"><b>Оғози кор: ${esc(sch.time)}</b>
-      <small>${esc(sch.days.map((d) => WD[d]).join(' · '))} · то ${sch.grace} дақ — сари вақт${sch.report ? ' · ҳисобот ба гурӯҳ' : ''}</small></div>
+      <small>${esc(sch.days.map((d) => WD[d]).join(' · '))} · сари вақт — то ${esc(onTimeUntil(sch))}${sch.report ? ' · ҳисобот ба гурӯҳ' : ''}</small></div>
     <button class="btn btn--ghost btn--sm" data-open-schedule aria-label="Тағйир додан">${ICON.edit}<span class="hide-phone">Тағйир додан</span></button></div></div>`;
 }
 
@@ -946,8 +954,9 @@ async function openSchedule() {
     <div class="field"><span class="field__label">Рӯзҳои корӣ</span>
       <div class="daychips" id="sc-days">${WD.map((w, i) => `<button type="button" data-d="${i}" class="${days.has(i) ? 'is-on' : ''}">${w}</button>`).join('')}</div>
       <span class="field__hint">Дар рӯзҳои дигар (масалан, якшанбе) савол намеравад.</span></div>
-    <label class="field"><span class="field__label">Дер ҳисоб мешавад, агар омадан аз</span>
-      <select id="sc-grace" class="select">${[0, 5, 10, 15, 20, 30].map((g) => `<option value="${g}"${sch.grace === g ? ' selected' : ''}>${g ? `${g} дақиқа дертар бошад` : 'вақти оғоз дертар бошад'}</option>`).join('')}</select></label>
+    <div class="field"><span class="field__label">«Сари вақт» ҳисоб мешавад, агар то ин соат ояд</span>
+      <div class="gracechips" id="sc-grace"></div>
+      <div class="grace-explain" id="sc-grace-text"></div></div>
     <div class="setting" style="padding:4px 0">
       <div class="setting__text"><b>Ҳисоботи рӯз ба гурӯҳ</b><small>Як соат пас аз оғози кор: кӣ омад, кӣ дер кард, кӣ наомад</small></div>
       <label class="switch"><input type="checkbox" id="sc-report" ${sch.report ? 'checked' : ''}><span></span></label></div>
@@ -956,6 +965,25 @@ async function openSchedule() {
       ${sch.enabled ? '<button class="btn btn--ghost btn--lg" id="sc-off">Хомӯш кардан</button>' : ''}
       <button class="btn btn--primary btn--lg" id="sc-save">Сабт кардан</button>
     </div>`);
+  // Имтиёз (дақиқа) → соатҳои аниқ, ки ҳангоми иваз шудани «Оғози кор» зинда нав мешаванд
+  const graces = [...new Set([0, 5, 10, 15, 20, 30, Number(sch.grace) || 0])].sort((a, b) => a - b);
+  let grace = Number.isFinite(Number(sch.grace)) ? Number(sch.grace) : 10;
+  const renderGrace = () => {
+    const start = $('#sc-time').value || '08:00';
+    $('#sc-grace').innerHTML = graces.map((g) => `<button type="button" data-g="${g}" class="${g === grace ? 'is-on' : ''}">
+      <b>${addMin(start, g)}</b><small>${g ? `+${g} дақиқа` : 'бе имтиёз'}</small></button>`).join('');
+    $('#sc-grace-text').innerHTML = `<p><i class="dot" style="background:var(--ok)"></i><span>То соати <b>${addMin(start, grace)}</b> омад — <b>сари вақт</b></span></p>
+      <p><i class="dot" style="background:var(--warn)"></i><span>Аз соати <b>${addMin(start, grace + 1)}</b> сар карда — <b>дер омад</b></span></p>`;
+  };
+  renderGrace();
+  $('#sc-time').addEventListener('input', renderGrace);
+  $('#sc-grace').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-g]');
+    if (!b) return;
+    grace = Number(b.dataset.g);
+    haptic('light');
+    renderGrace();
+  });
   $('#sc-days').addEventListener('click', (e) => {
     const b = e.target.closest('[data-d]');
     if (!b) return;
@@ -969,7 +997,7 @@ async function openSchedule() {
     err.hidden = true;
     if (time && !days.size) { err.textContent = 'Ақаллан як рӯзи кориро интихоб кунед'; err.hidden = false; return; }
     const res = await post('/api/work-schedule', {
-      time, days: [...days].sort(), grace: Number($('#sc-grace').value), report: $('#sc-report').checked,
+      time, days: [...days].sort(), grace, report: $('#sc-report').checked,
     }, { raw: true, quiet: true });
     if (!res || res.error) { err.textContent = (res && res.error) || 'Сабт нашуд'; err.hidden = false; haptic('error'); return; }
     S.schedule = { time: res.time, days: res.days, grace: res.grace, report: res.report, enabled: res.enabled };
@@ -1913,7 +1941,7 @@ function renderAttStats(a) {
     <div class="card"><div class="card__head"><h2>Давомот аз рӯи рӯзҳо</h2><span class="card__note">${a.daily.length} рӯз</span></div>
       <div class="card__body">${stackCols(a.daily, ATT_KEYS)}</div></div>
     <div class="grid grid-2">
-      <div class="card"><div class="card__head"><h2>Вақти омадан</h2><span class="card__note">${a.schedule.enabled ? `оғози кор ${esc(a.schedule.time)} · сари вақт то +${h.grace} дақ` : ''}</span></div>
+      <div class="card"><div class="card__head"><h2>Вақти омадан</h2><span class="card__note">${a.schedule.enabled ? `оғози кор ${esc(a.schedule.time)} · сари вақт — то ${esc(addMin(a.schedule.time, h.grace))}` : ''}</span></div>
         <div class="card__body">${h.values.some(Boolean) ? simpleCols(h.values, histLabels, histColors, { highlight: zeroIdx, height: 160 }) : emptyState('Ҳанӯз вақти омадан сабт нашудааст')}</div></div>
       <div class="card"><div class="card__head"><h2>Дер омадан аз рӯи рӯзҳои ҳафта</h2></div>
         <div class="card__body">${wlMax ? simpleCols(wl, WD, 'var(--warn)', { highlight: wl.indexOf(wlMax), height: 160 }) : emptyState('Касе дер накардааст', '', ICON.check)}</div></div>
@@ -2037,7 +2065,7 @@ async function initSettings() {
         <div class="card__head"><h2>Вақти корӣ</h2></div>
         <div class="card__body--flush">
           <div class="setting"><div class="setting__text"><b>${S.schedule && S.schedule.enabled ? 'Оғози кор: ' + esc(S.schedule.time) : 'Хомӯш'}</b>
-            <small>${S.schedule && S.schedule.enabled ? esc(`${S.schedule.days.map((x) => WD[x]).join(' · ')} · дер — баъди ${S.schedule.grace} дақ · ҳисобот ба гурӯҳ: ${S.schedule.report ? 'бале' : 'не'}`) : 'Бот аз кормандон намепурсад, ки ба кор омаданд ё не'}</small></div>
+            <small>${S.schedule && S.schedule.enabled ? esc(`${S.schedule.days.map((x) => WD[x]).join(' · ')} · сари вақт — то ${onTimeUntil(S.schedule)} · ҳисобот ба гурӯҳ: ${S.schedule.report ? 'бале' : 'не'}`) : 'Бот аз кормандон намепурсад, ки ба кор омаданд ё не'}</small></div>
             <button class="btn btn--primary btn--sm" data-open-schedule>${S.schedule && S.schedule.enabled ? 'Тағйир додан' : 'Муқаррар кардан'}</button></div>
         </div>
       </div>
