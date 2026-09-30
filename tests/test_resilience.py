@@ -194,6 +194,20 @@ async def t_restore_missing_db():
     check("missing DB restored from newest backup", restored == path and db.get_employee(42) is not None)
     check("restore is a no-op when DB exists", db.restore_if_missing() is None)
 
+    # Базаро ҳангоми кор нест карданд → SQLite файли холии нав сохт (бе ҷадвалҳо)
+    for ext in ("", "-wal", "-shm"):
+        try:
+            os.remove(db.DB_PATH + ext)
+        except OSError:
+            pass
+    import sqlite3
+    c = sqlite3.connect(db.DB_PATH)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.close()
+    check("empty schema-less file counts as missing", db.restore_if_missing() == path)
+    db.init_db()
+    check("data back after empty-file restore", db.get_employee(42) is not None)
+
 
 async def run():
     await t_restore_missing_db()

@@ -1685,7 +1685,19 @@ def restore_if_missing() -> str | None:
     BACKUP_DIR ва RESTORE_DIRS (бо «:» ҷудо, масалан /var/backups/hrcontrol/db).
     """
     if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 0:
-        return None
+        # Файл ҳаст — вале оё ин базаи мост? Агар базаро ҳангоми кори бот нест
+        # кунанд, SQLite файли холии нав месозад (бе ҷадвалҳо) — онро ҳам «нест» мешуморем.
+        try:
+            probe = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5)
+            try:
+                ok = probe.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='requests'").fetchone()
+            finally:
+                probe.close()
+        except sqlite3.Error:
+            ok = None
+        if ok:
+            return None
     dirs = [cfg.BACKUP_DIR] + [d for d in os.environ.get("RESTORE_DIRS", "").split(":") if d.strip()]
     candidates = []
     for directory in dirs:
@@ -1700,6 +1712,8 @@ def restore_if_missing() -> str | None:
         return None
     newest = max(candidates, key=os.path.getmtime)
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
+    if os.path.exists(DB_PATH):                       # файли холӣ/бегонаро нест намекунем — канор мегузорем
+        os.replace(DB_PATH, f"{DB_PATH}.broken-{cfg.now().strftime('%Y%m%d_%H%M%S')}")
     for ext in ("-wal", "-shm"):
         try:
             os.remove(DB_PATH + ext)
