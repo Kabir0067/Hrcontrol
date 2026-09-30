@@ -506,9 +506,13 @@ async def handle_overview(request: web.Request) -> web.Response:
 
 # ── Вақти корӣ ва давомот ──────────────────────────────────────────────
 
+def _custom_count() -> int:
+    return sum(1 for e in db.list_employees() if e["active"] and e["schedule"]["custom"])
+
+
 @_guard
 async def handle_work_schedule(request: web.Request) -> web.Response:
-    return _json(db.get_schedule())
+    return _json({**db.get_schedule(), "custom_count": _custom_count()})
 
 
 @_guard
@@ -616,8 +620,24 @@ async def handle_employee_update(request: web.Request) -> web.Response:
         return _err("Корманд ёфт нашуд", 404)
     alias = str(data["alias"]) if "alias" in data and data["alias"] is not None else None
     active = bool(data["active"]) if "active" in data else None
-    db.update_employee(uid, alias=alias, active=active)
-    return _json({"ok": True, "employee": db.get_employee(uid), "message": "Сабт шуд"})
+    extra: dict = {}
+    if "work_time" in data:                          # null / "" — мисли ҳама
+        value = str(data.get("work_time") or "").strip()
+        if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+            return _err("Вақтро ба шакли 14:00 нависед")
+        extra["work_time"] = value
+    if "work_days" in data:                          # null — мисли ҳама
+        days = data.get("work_days")
+        if days is not None:
+            if not isinstance(days, list) or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
+                return _err("Рӯзҳои корӣ нодурустанд")
+            if not days:
+                return _err("Ақаллан як рӯзи кориро интихоб кунед")
+        extra["work_days"] = days
+    db.update_employee(uid, alias=alias, active=active, **extra)
+    emp = db.get_employee(uid)
+    emp["schedule"] = db.emp_schedule(emp, db.get_schedule())
+    return _json({"ok": True, "employee": emp, "message": "Сабт шуд"})
 
 
 @_guard
@@ -803,18 +823,19 @@ async def handle_attendance_export(request: web.Request) -> web.Response:
     days = data["days"]
     w.writerow([f"Давомот: {data['period']['start']} — {data['period']['end']}",
                 f"Оғози кор: {data['schedule']['time'] or '—'}"])
-    w.writerow(["Корманд"] + [f"{d['date'][8:10]}.{d['date'][5:7]} {_WD_SHORT[d['wd']]}" for d in days]
+    w.writerow(["Корманд", "Оғози кор"] + [f"{d['date'][8:10]}.{d['date'][5:7]} {_WD_SHORT[d['wd']]}" for d in days]
                + ["Омад", "Сари вақт", "Дер", "Наомад", "Рухсатӣ", "Ҷавоб надод",
                   "Дерӣ (дақ.)", "Давомот %", "Миёнаи омадан"])
     for emp in data["employees"]:
-        row = [emp["name"]]
+        row = [emp["name"], emp["start"] or ""]
         for d in days:
             cell = emp["cells"].get(d["date"])
             if cell:
                 row.append({"on_time": cell["t"], "late": f"{cell['t']} (+{cell['late']})",
                             "absent": "Н", "leave": "Р", "pending": "?"}.get(cell["s"], ""))
             else:
-                row.append("—" if not d["workday"] else "")
+                works = d["wd"] in emp["days"] and not d["off"]
+                row.append("" if works else "—")
         s = emp["summary"]
         row += [s["present"], s["on_time"], s["late"], s["absent"], s["leave"], s["pending"],
                 s["late_minutes"], "" if s["rate"] is None else s["rate"], s["avg_arrival"] or ""]
@@ -823,10 +844,10 @@ async def handle_attendance_export(request: web.Request) -> web.Response:
     w.writerow(["Шартҳо: 08:25 — сари вақт; 08:47 (+17) — дер (дақиқа); Н — наомад; "
                 "Р — рухсатӣ; ? — ҷавоб надод; — — рӯзи истироҳат"])
     w.writerow([])
-    w.writerow(["Сана", "Корманд", "Ҳолат", "Вақти омадан", "Дер (дақ.)", "Сабаб", "Кай меояд", "Манбаъ"])
+    w.writerow(["Сана", "Корманд", "Ҳолат", "Оғози кор", "Вақти омадан", "Дер (дақ.)", "Сабаб", "Кай меояд", "Манбаъ"])
     for emp in data["employees"]:
         for day, cell in sorted(emp["cells"].items()):
-            w.writerow([day, emp["name"], _STATE_TG.get(cell["s"], cell["s"]), cell["t"],
+            w.writerow([day, emp["name"], _STATE_TG.get(cell["s"], cell["s"]), cell["sched"], cell["t"],
                         cell["late"] or "", cell["reason"], cell["eta"],
                         {"bot": "бот", "admin": "админ", "request": "дархост"}.get(cell["src"], cell["src"])])
     return _csv_response(buf, f"davomot-{data['period']['key']}.csv")

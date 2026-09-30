@@ -235,6 +235,29 @@ async def run_tests():
         r = await c.post("/api/employees/5555", headers=H, json={"active": False})
         check("unknown employee 404", r.status == 404)
 
+        # ── вақти кории алоҳида
+        r = await c.post("/api/employees/1001", headers=H, json={"work_time": "14:00", "work_days": [0, 1, 2, 3, 4]})
+        j = await r.json()
+        check("personal work time saved", r.status == 200 and j["employee"]["schedule"]["time"] == "14:00"
+              and j["employee"]["schedule"]["days"] == [0, 1, 2, 3, 4] and j["employee"]["schedule"]["custom"])
+        r = await c.post("/api/employees/1001", headers=H, json={"work_time": "25:00"})
+        check("personal work time validated", r.status == 400)
+        r = await c.post("/api/employees/1001", headers=H, json={"work_days": []})
+        check("personal work days need one day", r.status == 400)
+        r = await c.get("/api/work-schedule", headers=H)
+        check("schedule reports custom count", (await r.json())["custom_count"] == 1)
+        emps = await (await c.get("/api/employees", headers=H)).json()
+        e1001 = next(e for e in emps if e["user_id"] == 1001)
+        check("employees list carries schedule", e1001["schedule"]["time"] == "14:00" and e1001["work_days"] == [0, 1, 2, 3, 4])
+        mon = await (await c.get("/api/attendance/month", headers=H)).json()
+        check("month employee start", next(e for e in mon["employees"] if e["user_id"] == 1001)["start"] == "14:00")
+        w = await (await c.get("/api/workers/1001", headers=H)).json()
+        check("worker detail carries schedule", w["schedule"]["custom"] and w["work_time"] == "14:00")
+        r = await c.get(f"/api/attendance.csv?token={tok}")
+        check("CSV has own start column", "Оғози кор" in await r.text())
+        r = await c.post("/api/employees/1001", headers=H, json={"work_time": None, "work_days": None})
+        check("personal schedule reset", not (await r.json())["employee"]["schedule"]["custom"])
+
         # ── вақти корӣ
         r = await c.get("/api/work-schedule", headers=H)
         check("work schedule read", (await r.json())["time"] == "08:30")

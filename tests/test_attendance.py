@@ -330,6 +330,60 @@ async def run():
     stats = db.get_attendance_stats("2026-09-05", "2026-10-04")
     check("stats histogram & workers", sum(stats["hist"]["values"]) == stats["summary"]["present"] and stats["workers"])
 
+    # ── вақти кории алоҳида (масалан, аз 14:00, Дш–Ҷм) ─────────────────
+    F = 66
+    db.touch_employee(F, "Фирӯза Шарипова", None)
+    db.update_employee(F, work_time="14:00", work_days=[0, 1, 2, 3, 4])
+    es = db.emp_schedule(db.get_employee(F), db.get_schedule())
+    check("personal schedule stored", es["time"] == "14:00" and es["days"] == [0, 1, 2, 3, 4] and es["custom"])
+    at("2026-10-07", "08:31")                                 # чоршанбе
+    await handlers.process_work_attendance(bot)
+    asked = [c[1] for c in bot.take() if c[0] == "send"]
+    check("14:00 employee not asked with the 08:30 group", F not in asked and A in asked)
+    at("2026-10-07", "09:31")
+    await handlers.send_daily_report(bot)
+    rep = texts(bot.take(), "send", GROUP)
+    check("daily report lists later starters", rep and "баъдтар" in rep[0] and "Фирӯза" in rep[0] and "14:00" in rep[0], rep)
+    at("2026-10-07", "13:59")
+    await handlers.process_work_attendance(bot)
+    check("not asked one minute before own start", F not in [c[1] for c in bot.take() if c[0] == "send"])
+    at("2026-10-07", "14:01")
+    await handlers.process_work_attendance(bot)
+    calls = bot.take()
+    sent_f = [c for c in calls if c[0] == "send" and c[1] == F]
+    check("asked at own start time with own clock", len(sent_f) == 1 and "14:00" in sent_f[0][2])
+    rec_f = db.get_today_attendance(F)
+    check("record scheduled at 14:00", rec_f["scheduled_at"].endswith("14:00:00"))
+    at("2026-10-07", "14:12")
+    await press(F, f"att:y:{rec_f['id']}")
+    cell = db._cell(db.get_attendance(rec_f["id"]), db.get_schedule()["grace"])
+    check("lateness counted from own start (12 min)", cell["s"] == "late" and cell["late"] == 12, cell)
+    day = db.get_attendance_day("2026-10-07")
+    item = next(i for i in day["items"] if i["user_id"] == F)
+    check("day view shows own start", item["start"] == "14:00" and item["custom"] and item["works"])
+    at("2026-10-10", "07:00")                                 # шанбе — барои Ф рӯзи истироҳат
+    db.set_state(F, {"step": "confirm", "type": "absent", "reason": "Кори шахсӣ", "minutes": 0})
+    await press(F, "f:send")
+    bot.take()
+    check("absent request on own day off creates no attendance", db.get_today_attendance(F) is None)
+    for hm in ("08:31", "14:01"):
+        at("2026-10-10", hm)
+        await handlers.process_work_attendance(bot)
+        asked = [c[1] for c in bot.take() if c[0] == "send"]
+        if hm == "08:31":
+            check("Saturday: others asked", A in asked)
+        check(f"Saturday {hm}: not asked on own day off", F not in asked)
+    sat = db.get_attendance_day("2026-10-10")
+    check("day view: own day off", not next(i for i in sat["items"] if i["user_id"] == F)["works"])
+    m = db.get_attendance_month("2026-09")
+    mf = next(e for e in m["employees"] if e["user_id"] == F)
+    check("month carries own days/start", mf["days"] == [0, 1, 2, 3, 4] and mf["start"] == "14:00")
+    cell = db.admin_set_attendance(F, "2026-10-08", "present", clock="14:05")
+    check("manual mark uses own start (14:05 = on time)", cell["s"] == "on_time" and cell["sched"] == "14:00")
+    db.update_employee(F, work_time=None, work_days=None)
+    es = db.emp_schedule(db.get_employee(F), db.get_schedule())
+    check("reset to common schedule", not es["custom"] and es["time"] == "08:30" and es["days"] == [0, 1, 2, 3, 4, 5])
+
     # ── нусхаи ҳаррӯза ─────────────────────────────────────────────────
     await handlers.daily_backup(bot)
     files = os.listdir(cfg.BACKUP_DIR)

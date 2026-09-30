@@ -293,6 +293,21 @@ function addMin(hhmm, n) {
   const t = ((h * 60 + m + Number(n || 0)) % 1440 + 1440) % 1440;
   return `${p2(Math.floor(t / 60))}:${p2(t % 60)}`;
 }
+/** Рӯзҳои корӣ ба забони одамӣ: [0..5] → «Дш–Шб». */
+function daysText(days) {
+  const list = (days || []).slice().sort((a, b) => a - b);
+  if (!list.length) return '—';
+  const run = list.every((d, i) => i === 0 || d === list[i - 1] + 1);
+  return run && list.length > 2 ? `${WD[list[0]]}–${WD[list[list.length - 1]]}` : list.map((d) => WD[d]).join(', ');
+}
+/** Оё корманд дар ин рӯз кор мекунад (рӯзҳои худаш + идҳо). */
+const empWorks = (emp, day) => !day.off && (emp.days || []).includes(day.wd);
+/** Вақти оғози кори корманд аз маълумоти боршуда (рӯз ё моҳ). */
+function startOf(uid) {
+  const it = (S.att.dayData && S.att.dayData.items.find((x) => x.user_id === uid))
+    || (S.att.month && S.att.month.employees.find((x) => x.user_id === uid));
+  return (it && it.start) || (S.schedule && S.schedule.time) || '';
+}
 /** То кадом соат «сари вақт» ҳисоб мешавад (бо ҳамон дақиқа). */
 const onTimeUntil = (sch) => addMin(sch.time, sch.grace);
 function monthTitle(key) { const [y, m] = key.split('-').map(Number); return `${cap(MONTHS[m - 1])} ${y}`; }
@@ -943,7 +958,7 @@ function scheduleBar(sch) {
 }
 
 async function openSchedule() {
-  const sch = S.schedule || (await api('/api/work-schedule')) || { time: '', days: [0, 1, 2, 3, 4, 5], grace: 10, report: true };
+  const sch = (await api('/api/work-schedule', { quiet: true })) || S.schedule || { time: '', days: [0, 1, 2, 3, 4, 5], grace: 10, report: true };
   const days = new Set(sch.days);
   openSheet(`
     <div class="sheet__title">Вақти корӣ</div>
@@ -954,6 +969,9 @@ async function openSchedule() {
     <div class="field"><span class="field__label">Рӯзҳои корӣ</span>
       <div class="daychips" id="sc-days">${WD.map((w, i) => `<button type="button" data-d="${i}" class="${days.has(i) ? 'is-on' : ''}">${w}</button>`).join('')}</div>
       <span class="field__hint">Дар рӯзҳои дигар (масалан, якшанбе) савол намеравад.</span></div>
+    <div class="alert alert--info small">${sch.custom_count
+      ? `<b>${sch.custom_count} корманд</b> вақти кории алоҳида доранд — барои онҳо вақти худашон кор мекунад.`
+      : 'Агар касе вақти дигар кор кунад (масалан, аз 14:00), дар <b>Кормандон → профили ӯ → «Вақти корӣ»</b> алоҳида гузоред.'}</div>
     <div class="field"><span class="field__label">«Сари вақт» ҳисоб мешавад, агар то ин соат ояд</span>
       <div class="gracechips" id="sc-grace"></div>
       <div class="grace-explain" id="sc-grace-text"></div></div>
@@ -1134,7 +1152,7 @@ function renderAttDay() {
 
   let banner = '';
   if (d.off) banner = `<div class="alert alert--info">🌴 <b>${esc(d.off || 'Рӯзи истироҳат')}</b> — дар ин рӯз савол намеравад.</div>`;
-  else if (d.weekend) banner = `<div class="alert alert--info">🌴 ${cap(WD_FULL[d.wd])} — рӯзи истироҳат. Бот савол намефиристад.</div>`;
+  else if (d.weekend && !d.anyone_works) banner = `<div class="alert alert--info">🌴 ${cap(WD_FULL[d.wd])} — рӯзи истироҳат. Бот савол намефиристад.</div>`;
 
   const rows = list.map(({ it, i }) => {
     const c = it.cell;
@@ -1143,7 +1161,15 @@ function renderAttDay() {
     else if (c && c.s === 'leave') sub = c.reason || 'рухсатӣ';
     else if (c && c.s === 'pending') sub = 'ба савол ҷавоб надод';
     else if (c && c.reason) sub = c.reason;
-    else if (!c) sub = it.active ? (d.future ? '' : 'савол нагирифт') : 'савол намегирад';
+    else if (!c) {
+      const now = new Date();
+      const clock = `${p2(now.getHours())}:${p2(now.getMinutes())}`;
+      if (!it.active) sub = 'савол намегирад';
+      else if (!it.works) sub = 'рӯзи истироҳаташ';
+      else if (d.future || (d.today && it.start > clock)) sub = `кораш аз ${it.start}`;
+      else sub = 'савол нагирифт';
+    }
+    if (c && it.custom) sub = [`оғози кор ${it.start}`, sub].filter(Boolean).join(' · ');
     const time = c && c.t
       ? `<span class="item__time">${c.t}</span>${c.late ? pill(`дер ${fmtMinutes(c.late)}`, 'warn') : pill('сари вақт', 'ok')}`
       : attPill(c ? c.s : 'none');
@@ -1185,7 +1211,7 @@ function monthCell(emp, day) {
     return `<button class="mc mc--${c.s}" data-cell="${key}" title="${esc(tip)}">${txt}</button>`;
   }
   if (day.future) return '<span class="mc mc--future"></span>';
-  if (!day.workday) return '';
+  if (!empWorks(emp, day)) return '';
   return `<button class="mc mc--none" data-cell="${key}" title="${esc(`${shortName(emp.name)} · ${fmtDay(day.date)}: сабт нест`)}">·</button>`;
 }
 
@@ -1226,8 +1252,8 @@ function renderAttMonth() {
   const head = `<tr><th class="m-name">Корманд</th>${d.days.map((day) => `<th class="m-day${day.workday ? '' : ' is-off'}${day.today ? ' is-today' : ''}" title="${esc(fmtDay(day.date) + (day.off ? ' · ' + day.off : ''))}"><button class="m-person" style="display:block;text-align:center;color:inherit" data-goday="${day.date}"><b>${Number(day.date.slice(8))}</b><small>${WD[day.wd]}</small></button></th>`).join('')}
     <th class="m-sum">Давомот</th><th class="m-sum">Дер</th><th class="m-sum">Наомад</th></tr>`;
   const body = emps.map((e) => `<tr>
-    <td class="m-name"><button class="m-person" data-uid="${e.user_id}">${avatar(e.name, e.user_id, 'avatar--sm' + (e.active ? '' : ' is-off'))}<span style="min-width:0"><b>${esc(shortName(e.name))}</b><small>${e.summary.rate != null ? `${e.summary.rate}%` : ''}${e.summary.avg_arrival ? ` · миёна ${e.summary.avg_arrival}` : ''}${e.active ? '' : ' · савол намегирад'}</small></span></button></td>
-    ${d.days.map((day) => `<td class="${!day.workday && !e.cells[day.date] ? 'm-off' : ''}">${monthCell(e, day)}</td>`).join('')}
+    <td class="m-name"><button class="m-person" data-uid="${e.user_id}">${avatar(e.name, e.user_id, 'avatar--sm' + (e.active ? '' : ' is-off'))}<span style="min-width:0"><b>${esc(shortName(e.name))}</b><small>${e.custom ? `аз ${esc(e.start)} · ` : ''}${e.summary.rate != null ? `${e.summary.rate}%` : ''}${e.summary.avg_arrival ? ` · миёна ${e.summary.avg_arrival}` : ''}${e.active ? '' : ' · савол намегирад'}</small></span></button></td>
+    ${d.days.map((day) => `<td class="${!empWorks(e, day) && !e.cells[day.date] ? 'm-off' : ''}">${monthCell(e, day)}</td>`).join('')}
     <td class="m-sum">${pctText(e.summary.rate)}<small>${e.summary.present} рӯз</small></td>
     <td class="m-sum" style="color:${e.summary.late ? 'var(--warn-text)' : 'inherit'}">${e.summary.late}<small>${e.summary.late_minutes ? fmtHours(e.summary.late_minutes) : '—'}</small></td>
     <td class="m-sum" style="color:${e.summary.absent ? 'var(--danger-text)' : 'inherit'}">${e.summary.absent}<small>${e.summary.pending ? e.summary.pending + ' бе ҷавоб' : ''}</small></td></tr>`).join('');
@@ -1236,9 +1262,9 @@ function renderAttMonth() {
   const cards = emps.map((e) => `
     <button class="person" data-uid="${e.user_id}">
       <div class="person__head">${avatar(e.name, e.user_id, e.active ? '' : 'is-off')}
-        <div class="person__who"><b>${esc(shortName(e.name))}</b><small>${e.summary.avg_arrival ? 'Миёнаи омадан: ' + e.summary.avg_arrival : (e.active ? 'Ҳанӯз сабт нест' : 'Савол намегирад')}</small></div>
+        <div class="person__who"><b>${esc(shortName(e.name))}</b><small>${e.custom ? `Кор аз ${esc(e.start)} · ` : ''}${e.summary.avg_arrival ? 'миёнаи омадан ' + e.summary.avg_arrival : (e.active ? 'ҳанӯз сабт нест' : 'савол намегирад')}</small></div>
         <div class="person__score"><b>${pctText(e.summary.rate)}</b><small>давомот</small></div></div>
-      <div class="strip">${d.days.map((day) => { const c = e.cells[day.date]; const s = c ? c.s : day.future ? 'future' : !day.workday ? 'off' : 'none'; return `<i class="s-${s}${day.today ? ' is-today' : ''}"></i>`; }).join('')}</div>
+      <div class="strip">${d.days.map((day) => { const c = e.cells[day.date]; const s = c ? c.s : day.future ? 'future' : !empWorks(e, day) ? 'off' : 'none'; return `<i class="s-${s}${day.today ? ' is-today' : ''}"></i>`; }).join('')}</div>
       <div class="person__nums">${pill(`Сари вақт ${e.summary.on_time}`, 'ok')}${e.summary.late ? pill(`Дер ${e.summary.late} · ${fmtHours(e.summary.late_minutes)}`, 'warn') : ''}${e.summary.absent ? pill(`Наомад ${e.summary.absent}`, 'danger') : ''}${e.summary.leave ? pill(`Рухсатӣ ${e.summary.leave}`, 'info') : ''}${e.summary.pending ? pill(`Бе ҷавоб ${e.summary.pending}`, 'muted') : ''}</div>
     </button>`).join('');
 
@@ -1304,7 +1330,7 @@ function openAttEdit(userId, name, date, cell, onDone) {
     $$('#ae-choice [data-mode]').forEach((b) => b.classList.toggle('is-active', b.dataset.mode === mode));
     if (mode === 'present') {
       f.innerHTML = `<label class="field"><span class="field__label">Вақти омадан</span>
-        <input class="input" id="ae-time" type="time" value="${esc((cell && cell.t) || sch.time || '08:00')}"></label>`;
+        <input class="input" id="ae-time" type="time" value="${esc((cell && cell.t) || (cell && cell.sched !== '00:00' && cell.sched) || startOf(userId) || sch.time || '08:00')}"></label>`;
     } else if (mode === 'absent') {
       f.innerHTML = `<label class="field"><span class="field__label">Сабаб</span>
           <input class="input" id="ae-reason" type="text" maxlength="300" value="${esc((cell && cell.reason) || '')}" placeholder="Масалан: бемор аст"></label>
@@ -1675,6 +1701,7 @@ function renderTeam() {
         <div class="person__score"><b>${pctText(m.rate)}</b><small>давомот</small></div></div>
       <div class="person__nums">
         ${w.active ? '' : pill('Савол намегирад', 'muted')}
+        ${w.active && w.schedule && w.schedule.custom ? pill(`🕑 ${w.schedule.time}${w.schedule.custom_days ? ' · ' + daysText(w.schedule.days) : ''}`, 'violet') : ''}
         ${m.present ? pill(`Омад ${m.present}`, 'ok') : ''}
         ${m.late ? pill(`Дер ${m.late}`, 'warn') : ''}
         ${m.absent ? pill(`Наомад ${m.absent}`, 'danger') : ''}
@@ -1705,9 +1732,10 @@ async function openEmployee(uid, period = '') {
     + Array.from({ length: lead }, () => '<div class="cal__d is-empty"></div>').join('')
     + m.days.map((day) => {
       const c = emp.cells[day.date];
-      const state = c ? c.s : day.future ? 'future' : !day.workday ? 'off' : 'none';
+      const works = empWorks(emp, day);
+      const state = c ? c.s : day.future ? 'future' : !works ? 'off' : 'none';
       const sub = c ? (c.t || { absent: 'Н', leave: 'Р', pending: '?' }[c.s] || '') : '';
-      const clickable = c || (!day.future && day.workday) || day.future;
+      const clickable = c || (!day.future && works) || day.future;
       return `<button class="cal__d s-${state}${day.today ? ' is-today' : ''}" ${clickable ? `data-cal="${day.date}"` : 'disabled'} title="${esc(fmtDay(day.date) + (c ? ' · ' + ATT[c.s].label : ''))}"><b>${Number(day.date.slice(8))}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</button>`;
     }).join('');
 
@@ -1723,6 +1751,10 @@ async function openEmployee(uid, period = '') {
     ${hasEmployee ? `<div class="card" style="border-radius:12px">
       <div class="setting"><div class="setting__text"><b>Саволи ҳаррӯзаи давомот</b><small>${d.active ? 'Ҳар рӯзи корӣ мепурсад «Ба кор омадед?»' : 'Хомӯш — ба ӯ савол намеравад'}</small></div>
         <label class="switch"><input type="checkbox" id="emp-active" ${d.active ? 'checked' : ''}><span></span></label></div>
+      <div class="setting"><div class="setting__text"><b>Вақти корӣ</b><small>${d.schedule && d.schedule.custom
+          ? `<span class="pill pill--violet" style="margin-right:6px">алоҳида</span>${esc(d.schedule.time || '—')} · ${esc(daysText(d.schedule.days))}`
+          : `Мисли ҳама: ${esc((d.schedule && d.schedule.time) || 'муқаррар нашудааст')} · ${esc(daysText(d.schedule && d.schedule.days))}`}</small></div>
+        <button class="btn btn--ghost btn--sm" id="emp-sched">${ICON.clock} Иваз</button></div>
       <div class="setting"><div class="setting__text"><b>Номи намоишӣ</b><small>${d.alias ? esc(d.alias) : 'Аз Telegram гирифта мешавад'}</small></div>
         <button class="btn btn--ghost btn--sm" id="emp-rename">${ICON.edit} Иваз</button></div></div>` : '<div class="alert alert--warn">Корманд аз рӯйхат нест шудааст — танҳо сабтҳои кӯҳна мондаанд.</div>'}
 
@@ -1778,6 +1810,8 @@ async function openEmployee(uid, period = '') {
     refreshAttViewsQuiet();
     reopen(p.key);
   });
+  const schBtn = $('#emp-sched');
+  if (schBtn) schBtn.addEventListener('click', () => openEmpSchedule(d, () => { refreshAttViewsQuiet(); reopen(p.key); }));
   const ren = $('#emp-rename');
   if (ren) ren.addEventListener('click', async () => {
     const value = await promptDialog({ title: 'Номи намоишӣ', text: 'Дар панел ва ҳисоботҳо ҳамин ном нишон дода мешавад. Холӣ гузоред — номи Telegram истифода мешавад.', label: 'Ном', value: d.alias || '', placeholder: shortName(d.tg_name), okText: 'Сабт кардан' });
@@ -1803,6 +1837,81 @@ async function openEmployee(uid, period = '') {
     haptic('success');
     toast(res.message, 'ok');
     afterDataChange();
+  });
+}
+
+/** Вақти кории алоҳида барои як корманд (масалан, аз 14:00). */
+async function openEmpSchedule(d, done) {
+  const g = (await api('/api/work-schedule', { quiet: true })) || S.schedule || { time: '', days: [0, 1, 2, 3, 4, 5], grace: 10, enabled: false };
+  let custom = Boolean(d.schedule && d.schedule.custom);
+  const days = new Set(d.work_days || g.days || [0, 1, 2, 3, 4, 5]);
+  openSheet(`
+    <div class="sheet__title">Вақти кории ${esc(shortName(d.name))}</div>
+    ${g.enabled ? '' : '<div class="alert alert--warn small">Саволи ҳаррӯза ҳоло хомӯш аст. Он пас аз муқаррар кардани вақти умумӣ дар «Давомот» кор мекунад.</div>'}
+    <div class="seg seg--block" id="es-mode">
+      <button data-custom="0">Мисли ҳама</button>
+      <button data-custom="1">Вақти алоҳида</button>
+    </div>
+    <div id="es-body" class="stack"></div>
+    <div class="grace-explain" id="es-explain"></div>
+    <div id="es-err" class="alert alert--danger" hidden></div>
+    <button class="btn btn--primary btn--lg btn--block" id="es-save">Сабт кардан</button>`);
+
+  const render = () => {
+    $$('#es-mode [data-custom]').forEach((b) => b.classList.toggle('is-active', (b.dataset.custom === '1') === custom));
+    if (!custom) {
+      $('#es-body').innerHTML = `<p class="sheet__text">Ба ӯ ҳамон вақте савол меравад, ки барои ҳама муқаррар шудааст:
+        <b>${esc(g.time || 'муқаррар нашудааст')}</b> · ${esc(daysText(g.days))}.</p>`;
+    } else if (!$('#es-time')) {
+      $('#es-body').innerHTML = `
+        <label class="field"><span class="field__label">Оғози кори ӯ</span>
+          <input id="es-time" class="input" type="time" value="${esc(d.work_time || '14:00')}"></label>
+        <div class="field"><span class="field__label">Рӯзҳои кории ӯ</span>
+          <div class="daychips" id="es-days">${WD.map((w, i) => `<button type="button" data-d="${i}" class="${days.has(i) ? 'is-on' : ''}">${w}</button>`).join('')}</div></div>`;
+      $('#es-time').addEventListener('input', explain);
+      $('#es-days').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-d]');
+        if (!b) return;
+        const x = Number(b.dataset.d);
+        if (days.has(x)) days.delete(x); else days.add(x);
+        b.classList.toggle('is-on', days.has(x));
+        haptic('light');
+        explain();
+      });
+    }
+    explain();
+  };
+  function explain() {
+    const time = custom ? ($('#es-time') && $('#es-time').value) : g.time;
+    const list = custom ? [...days] : g.days;
+    $('#es-explain').innerHTML = time && list.length
+      ? `<p><i class="dot" style="background:var(--brand)"></i><span>Бот ҳар <b>${esc(daysText(list))}</b> соати <b>${esc(time)}</b> мепурсад: «Ба кор омадед?»</span></p>
+         <p><i class="dot" style="background:var(--ok)"></i><span>То <b>${addMin(time, g.grace || 0)}</b> омад — <b>сари вақт</b>, баъд аз он — <b>дер</b></span></p>`
+      : '<p><span>Вақт ва ақаллан як рӯзро интихоб кунед.</span></p>';
+  }
+  $('#es-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-custom]');
+    if (!b) return;
+    custom = b.dataset.custom === '1';
+    if (!custom) $('#es-body').innerHTML = '';
+    haptic('light');
+    render();
+  });
+  render();
+  $('#es-save').addEventListener('click', async () => {
+    const err = $('#es-err');
+    err.hidden = true;
+    const body = custom
+      ? { work_time: $('#es-time').value, work_days: [...days].sort((a, b) => a - b) }
+      : { work_time: null, work_days: null };
+    if (custom && !body.work_time) { err.textContent = 'Вақти оғози корро нависед'; err.hidden = false; return; }
+    if (custom && !body.work_days.length) { err.textContent = 'Ақаллан як рӯзи кориро интихоб кунед'; err.hidden = false; return; }
+    const res = await post(`/api/employees/${d.user_id}`, body, { raw: true, quiet: true });
+    if (!res || res.error) { err.textContent = (res && res.error) || 'Сабт нашуд'; err.hidden = false; haptic('error'); return; }
+    haptic('success');
+    toast(custom ? `Вақти кории ${shortName(d.name)}: ${body.work_time}` : 'Акнун мисли ҳама кор мекунад', 'ok');
+    S.team.data = null;
+    if (done) done(); else closeSheet();
   });
 }
 
@@ -1918,7 +2027,7 @@ function renderAttStats(a) {
   const h = a.hist;
   const [sh, sm] = (h.start || '00:00').split(':').map(Number);
   const histLabels = h.edges.map((e, i) => {
-    if (!h.start) return i === h.edges.length - 1 ? `+${e}` : String(e);
+    if (!h.start) return (e > 0 ? `+${e}` : String(e)) + (i === h.edges.length - 1 ? '+' : '');
     const mins = sh * 60 + sm + e;
     const lbl = `${p2(Math.floor(((mins % 1440) + 1440) % 1440 / 60))}:${p2(((mins % 60) + 60) % 60)}`;
     return i === h.edges.length - 1 ? lbl + '+' : lbl;
@@ -1941,7 +2050,7 @@ function renderAttStats(a) {
     <div class="card"><div class="card__head"><h2>Давомот аз рӯи рӯзҳо</h2><span class="card__note">${a.daily.length} рӯз</span></div>
       <div class="card__body">${stackCols(a.daily, ATT_KEYS)}</div></div>
     <div class="grid grid-2">
-      <div class="card"><div class="card__head"><h2>Вақти омадан</h2><span class="card__note">${a.schedule.enabled ? `оғози кор ${esc(a.schedule.time)} · сари вақт — то ${esc(addMin(a.schedule.time, h.grace))}` : ''}</span></div>
+      <div class="card"><div class="card__head"><h2>Вақти омадан</h2><span class="card__note">${!h.start ? `дақиқа нисбат ба оғози кори ҳар кас · сари вақт то +${h.grace}` : a.schedule.enabled ? `оғози кор ${esc(h.start)} · сари вақт — то ${esc(addMin(h.start, h.grace))}` : ''}</span></div>
         <div class="card__body">${h.values.some(Boolean) ? simpleCols(h.values, histLabels, histColors, { highlight: zeroIdx, height: 160 }) : emptyState('Ҳанӯз вақти омадан сабт нашудааст')}</div></div>
       <div class="card"><div class="card__head"><h2>Дер омадан аз рӯи рӯзҳои ҳафта</h2></div>
         <div class="card__body">${wlMax ? simpleCols(wl, WD, 'var(--warn)', { highlight: wl.indexOf(wlMax), height: 160 }) : emptyState('Касе дер накардааст', '', ICON.check)}</div></div>

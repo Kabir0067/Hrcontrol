@@ -158,7 +158,9 @@ CREATE TABLE IF NOT EXISTS employees (
     first_seen TEXT NOT NULL,
     last_seen  TEXT NOT NULL,
     alias      TEXT,
-    active     INTEGER NOT NULL DEFAULT 1
+    active     INTEGER NOT NULL DEFAULT 1,
+    work_time  TEXT,              -- вақти алоҳидаи оғози кор (HH:MM) ё NULL = умумӣ
+    work_days  TEXT               -- рӯзҳои кории алоҳида ("0,1,2") ё NULL = умумӣ
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -191,8 +193,10 @@ _EXTRA_COLUMNS = {
         "confirmed_at":  "TEXT",
     },
     "employees": {
-        "alias":  "TEXT",
-        "active": "INTEGER NOT NULL DEFAULT 1",
+        "alias":     "TEXT",
+        "active":    "INTEGER NOT NULL DEFAULT 1",
+        "work_time": "TEXT",
+        "work_days": "TEXT",
     },
     "attendance": {
         "reminded_at": "TEXT",
@@ -369,6 +373,32 @@ def purge_stale_states() -> int:
 
 # Номе, ки админ гузоштааст, аз номи Telegram афзалият дорад.
 _EMP_NAME = "COALESCE(NULLIF(TRIM(e.alias), ''), e.name)"
+_UNSET = object()
+
+
+def _parse_days(value) -> list[int] | None:
+    """"0,1,2" → [0, 1, 2]; холӣ/нодуруст → None (яъне «мисли ҳама»)."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        days = sorted({int(x) for x in str(value).split(",") if x.strip() != ""})
+    except ValueError:
+        return None
+    days = [d for d in days if 0 <= d <= 6]
+    return days or None
+
+
+def emp_schedule(emp: dict, sch: dict) -> dict:
+    """Вақти кори як корманд: вақти алоҳидаи ӯ (агар гузошта шуда бошад) ё умумӣ."""
+    own_time = _valid_clock(emp.get("work_time"))
+    own_days = _parse_days(emp.get("work_days"))
+    return {
+        "time": own_time or sch["time"],
+        "days": own_days if own_days is not None else list(sch["days"]),
+        "custom_time": bool(own_time),
+        "custom_days": own_days is not None,
+        "custom": bool(own_time) or own_days is not None,
+    }
 
 
 def touch_employee(user_id: int, name: str, username: str | None) -> None:
@@ -402,7 +432,7 @@ def list_employees() -> list[dict]:
         rows = _rows(conn.execute(
             f"""
             SELECT e.user_id, e.name, e.username, e.alias, e.active,
-                   e.first_seen, e.last_seen, {_EMP_NAME} AS display,
+                   e.first_seen, e.last_seen, e.work_time, e.work_days, {_EMP_NAME} AS display,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id) AS requests,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id
                                                      AND r.status = 'pending') AS pending
@@ -413,18 +443,29 @@ def list_employees() -> list[dict]:
         att = conn.execute(
             "SELECT * FROM attendance WHERE work_date >= ? AND work_date <= ?", (start, end)
         ).fetchall()
-    grace = get_schedule()["grace"]
+    sch = get_schedule()
     per: dict[int, list[dict]] = {}
     for rec in att:
-        per.setdefault(rec["user_id"], []).append(_cell(dict(rec), grace))
+        per.setdefault(rec["user_id"], []).append(_cell(dict(rec), sch["grace"]))
     for row in rows:
         row["active"] = bool(row["active"])
+        row["schedule"] = emp_schedule(row, sch)
+        row["work_days"] = _parse_days(row["work_days"])
         row["month"] = _summarize(per.get(row["user_id"], []))
     return rows
 
 
-def update_employee(user_id: int, alias: str | None = None, active: bool | None = None) -> bool:
+def update_employee(user_id: int, alias: str | None = None, active: bool | None = None,
+                    work_time=_UNSET, work_days=_UNSET) -> bool:
+    """work_time / work_days: None ё "" — бозгашт ба вақти умумӣ."""
     sets, params = [], []
+    if work_time is not _UNSET:
+        sets.append("work_time = ?")
+        params.append(_valid_clock(work_time) or None)
+    if work_days is not _UNSET:
+        days = sorted({int(d) for d in (work_days or []) if 0 <= int(d) <= 6})
+        sets.append("work_days = ?")
+        params.append(",".join(map(str, days)) if days else None)
     if alias is not None:
         sets.append("alias = ?")
         params.append(alias.strip()[:80] or None)
@@ -894,35 +935,43 @@ def _summarize(cells: list[dict]) -> dict:
 def create_due_attendance() -> list[dict]:
     """Сабтҳои имрӯзаро месозад ва онҳоеро бармегардонад, ки бояд пурсида шаванд.
 
+    • ҳар корманд — дар вақти кории худаш (алоҳида ё умумӣ) ва рӯзҳои кории худаш;
     • UNIQUE(user_id, work_date) — restart ё чанд даъвати ҳамзамон бехатар;
-    • танҳо рӯзҳои корӣ (якшанбе ва идҳо — не);
-    • танҳо дар тирезаи ATTENDANCE_WINDOW пас аз оғози кор;
+    • идҳо барои ҳама — рӯзи истироҳат;
+    • танҳо дар тирезаи ATTENDANCE_WINDOW пас аз оғози кори ҳамон корманд;
     • кормандоне, ки имрӯз «намеоям/дер мекунам» фиристодаанд, савол намегиранд —
       сабабашон аз дархост гирифта мешавад.
     """
     sch = get_schedule()
     now = cfg.now()
-    if not sch["enabled"] or not is_workday(now.date(), sch):
-        return []
-    hour, minute = (int(x) for x in sch["time"].split(":"))
-    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if now < scheduled or now - scheduled > timedelta(minutes=cfg.ATTENDANCE_WINDOW):
-        return []
-
     day = now.strftime(cfg.DATE_FMT)
-    scheduled_at = cfg.to_str(scheduled)
+    if not sch["enabled"] or get_days_off(day, day):
+        return []
+    window = timedelta(minutes=cfg.ATTENDANCE_WINDOW)
     stamp = cfg.now_str()
     with _tx() as conn:
         employees = _rows(conn.execute(
-            f"SELECT e.user_id, {_EMP_NAME} AS name FROM employees e WHERE e.active = 1"))
+            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.work_time, e.work_days
+                  FROM employees e WHERE e.active = 1"""))
+        have = {r["user_id"] for r in conn.execute(
+            "SELECT user_id FROM attendance WHERE work_date = ?", (day,))}
         for emp in employees:
+            if emp["user_id"] in have:
+                continue
+            es = emp_schedule(emp, sch)
+            if now.weekday() not in es["days"] or not es["time"]:
+                continue
+            hour, minute = (int(x) for x in es["time"].split(":"))
+            scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if now < scheduled or now - scheduled > window:
+                continue
             conn.execute(
                 """
                 INSERT OR IGNORE INTO attendance
                     (user_id, name, work_date, scheduled_at, status, source, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'pending', 'bot', ?, ?)
                 """,
-                (emp["user_id"], emp["name"], day, scheduled_at, stamp, stamp),
+                (emp["user_id"], emp["name"], day, cfg.to_str(scheduled), stamp, stamp),
             )
         # Дархостҳои имрӯзаи «намеоям / дер мекунам» — савол лозим нест
         for req in conn.execute(
@@ -1037,10 +1086,11 @@ def attendance_from_request(user_id: int, req_type: str, reason: str,
         return None
     sch = get_schedule()
     today = cfg.now().date()
-    if not sch["enabled"] or not is_workday(today, sch):
-        return None
     emp = get_employee(user_id)
-    if not emp or not emp["active"]:
+    if not sch["enabled"] or not emp or not emp["active"]:
+        return None
+    es = emp_schedule(emp, sch)
+    if not is_workday(today, {**sch, "days": es["days"]}):
         return None
 
     day = today.isoformat()
@@ -1055,7 +1105,7 @@ def attendance_from_request(user_id: int, req_type: str, reason: str,
                        (user_id, name, work_date, scheduled_at, status, prompted_at,
                         reason, eta, source, created_at, updated_at)
                    VALUES (?, ?, ?, ?, 'absent', ?, ?, ?, 'request', ?, ?)""",
-                (user_id, emp["display"], day, _scheduled_for(day, sch["time"]), stamp,
+                (user_id, emp["display"], day, _scheduled_for(day, es["time"]), stamp,
                  reason[:1000], eta, stamp, stamp),
             )
         elif row["status"] == "pending":
@@ -1130,7 +1180,7 @@ def _people(conn, user_ids_with_records: set[int], user_id: int | None = None) -
         where = "e.user_id = ?"
         params = [int(user_id)]
     return _rows(conn.execute(
-        f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active
+        f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active, e.work_time, e.work_days
               FROM employees e WHERE {where} ORDER BY name COLLATE NOCASE""", params))
 
 
@@ -1154,16 +1204,23 @@ def get_attendance_day(day: str | None = None) -> dict:
 
     items, summary = [], {k: 0 for k in ATT_STATES}
     summary["none"] = 0
+    anyone_works = False
     for p in people:
         rec = recs.get(p["user_id"])
         cell = _cell(rec, sch["grace"]) if rec else None
         summary[cell["s"] if cell else "none"] += 1
-        items.append({**p, "active": bool(p["active"]), "cell": cell})
+        es = emp_schedule(p, sch)
+        works = d.weekday() in es["days"] and iso not in offs
+        anyone_works = anyone_works or (works and bool(p["active"]))
+        items.append({"user_id": p["user_id"], "name": p["name"], "username": p.get("username"),
+                      "active": bool(p["active"]), "cell": cell, "start": es["time"],
+                      "custom": es["custom"], "works": works})
     summary["total"] = len(items)
     summary["present"] = summary["on_time"] + summary["late"]
 
     return {
         **_day_info(d, sch, offs, today),
+        "anyone_works": anyone_works,
         "schedule": sch,
         "prev": (d - timedelta(days=1)).isoformat(),
         "next": (d + timedelta(days=1)).isoformat() if d < today else None,
@@ -1213,7 +1270,10 @@ def get_attendance_month(period: str | None = None, user_id: int | None = None) 
     for p in people:
         mine = cells.get(p["user_id"], {})
         all_cells.extend(mine.values())
-        employees.append({**p, "active": bool(p["active"]), "cells": mine,
+        es = emp_schedule(p, sch)
+        employees.append({"user_id": p["user_id"], "name": p["name"], "username": p.get("username"),
+                          "active": bool(p["active"]), "cells": mine,
+                          "start": es["time"], "days": es["days"], "custom": es["custom"],
                           "summary": _summarize(list(mine.values()))})
 
     next_key = _shift_month(key, 1)
@@ -1281,12 +1341,14 @@ def get_attendance_stats(date_from: str | None = None, date_to: str | None = Non
     # Вақти омадан нисбат ба оғози кор: қадами 10 дақиқа, аз −40 то +80
     edges = list(range(-40, 81, 10))
     hist = [0] * len(edges)
+    starts = set()
     for rec in recs:
         if rec["status"] != "present":
             continue
         arrived, planned = cfg.parse_dt(rec["arrived_at"]), cfg.parse_dt(rec["scheduled_at"])
         if not arrived or not planned:
             continue
+        starts.add(planned.strftime("%H:%M"))
         offset = (arrived - planned).total_seconds() / 60
         idx = 0
         for i, edge in enumerate(edges):
@@ -1299,7 +1361,9 @@ def get_attendance_stats(date_from: str | None = None, date_to: str | None = Non
         "daily": list(daily.values()),
         "workers": workers,
         "weekday_late": weekday_late,
-        "hist": {"edges": edges, "values": hist, "grace": grace, "start": sch["time"]},
+        "hist": {"edges": edges, "values": hist, "grace": grace,
+                 # як вақти оғоз — тамғаҳо бо соат; гуногун — бо дақиқаҳои нисбӣ
+                 "start": starts.pop() if len(starts) == 1 else ("" if starts else sch["time"])},
         "schedule": sch,
     }
 
@@ -1319,8 +1383,9 @@ def admin_set_attendance(user_id: int, work_date: str, status: str,
                            (user_id, work_date)).fetchone()
         if row is None and not emp:
             raise ValueError("Корманд ёфт нашуд")
+        own = emp_schedule(emp, sch)["time"] if emp else sch["time"]
         scheduled_at = row["scheduled_at"] if row else _scheduled_for(
-            work_date, sch["time"] or _valid_clock(clock) or "09:00")
+            work_date, own or _valid_clock(clock) or "09:00")
         arrived_at = None
         if status == "present":
             clock = _valid_clock(clock) or (scheduled_at[11:16] if scheduled_at else "09:00")
@@ -1962,6 +2027,9 @@ def get_worker_detail(user_id: int, date_from: str | None = None,
         "tg_name": emp["name"] if emp else fallback,
         "alias": emp["alias"] if emp else None,
         "active": bool(emp["active"]) if emp else False,
+        "work_time": (_valid_clock(emp["work_time"]) or None) if emp else None,
+        "work_days": _parse_days(emp["work_days"]) if emp else None,
+        "schedule": emp_schedule(dict(emp), get_schedule()) if emp else None,
         "username": emp["username"] if emp else None,
         "first_seen": emp["first_seen"] if emp else None,
         "last_seen": emp["last_seen"] if emp else None,

@@ -536,7 +536,8 @@ def daily_report_text(day: dict) -> str:
     s = day["summary"]
     lines = [
         f"📋 <b>Давомоти имрӯз</b> · {_date_words(day['date'])}",
-        f"Оғози кор: <b>{day['schedule']['time']}</b>",
+        f"Оғози кор: <b>{day['schedule']['time']}</b>"
+        + (" (баъзеҳо — вақти алоҳида)" if any(it.get("custom") for it in day["items"]) else ""),
         "",
         f"✅ Сари вақт омаданд: <b>{s['on_time']}</b>",
     ]
@@ -555,6 +556,14 @@ def daily_report_text(day: dict) -> str:
     if groups["pending"]:
         lines.append(f"❔ Ҷавоб надоданд: <b>{len(groups['pending'])}</b>")
         lines.append("   " + ", ".join(_esc(_short_name(r["name"])) for r in groups["pending"][:40]))
+    # Онҳое, ки вақти кориашон баъдтар сар мешавад (масалан, аз 14:00)
+    now_clock = cfg.now().strftime("%H:%M")
+    later = sorted((it for it in day["items"] if not it.get("cell") and it.get("active")
+                    and it.get("works") and (it.get("start") or "") > now_clock),
+                   key=lambda it: it["start"])
+    if later:
+        lines.append(f"🕑 Кори онҳо баъдтар сар мешавад: <b>{len(later)}</b>")
+        lines += names(later, lambda r: f"   • {_esc(_short_name(r['name']))} — аз {r['start']}")
     return "\n".join(lines)
 
 

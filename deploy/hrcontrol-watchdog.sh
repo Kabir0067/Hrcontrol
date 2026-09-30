@@ -65,7 +65,7 @@ if [ ! -f "$CODE/main.py" ] && [ -d "$REPO" ]; then
 fi
 if [ -f "$CODE/requirements.txt" ] && ! "$CODE/.venv/bin/python3" -c "import telebot, aiohttp" >/dev/null 2>&1; then
     rm -rf "$CODE/.venv"
-    if python3 -m venv "$CODE/.venv" && "$CODE/.venv/bin/pip" install -q -r "$CODE/requirements.txt"; then
+    if python3 -m venv "$CODE/.venv" && { "$CODE/.venv/bin/pip" install -q -r "$CODE/requirements.txt" || "$CODE/.venv/bin/pip" install -q "pyTelegramBotAPI>=4.14,<5" "aiohttp>=3.9,<4" tzdata; }; then
         sha256sum "$CODE/requirements.txt" | cut -c1-16 > "$CODE/.venv/.req"
         log "venv вайрон/нест буд → аз нав сохта шуд"
         restart=1

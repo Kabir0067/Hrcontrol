@@ -92,9 +92,15 @@ rollback() {
 REQ_HASH=$(sha256sum "$CODE/requirements.txt" | cut -c1-16)
 if [ ! -x "$CODE/.venv/bin/python3" ] || [ "$(cat "$CODE/.venv/.req" 2>/dev/null)" != "$REQ_HASH" ]; then
     log "насби китобхонаҳо…"
+    # venv-и вайрон (масалан, пас аз навсозии Python дар Ubuntu) — аз нав
+    "$CODE/.venv/bin/python3" -c "" >/dev/null 2>&1 || rm -rf "$CODE/.venv"
     python3 -m venv "$CODE/.venv"
-    "$CODE/.venv/bin/pip" install -q --upgrade pip
-    "$CODE/.venv/bin/pip" install -q -r "$CODE/requirements.txt" || { rollback; die "pip install нашуд"; }
+    "$CODE/.venv/bin/pip" install -q --upgrade pip || true
+    if ! "$CODE/.venv/bin/pip" install -q -r "$CODE/requirements.txt"; then
+        # Версияҳои маҳкам барои Python-и нав набошанд — версияҳои мувофиқи ҳамон силсила
+        log "версияҳои маҳкам насб нашуданд → версияҳои мувофиқ"
+        "$CODE/.venv/bin/pip" install -q "pyTelegramBotAPI>=4.14,<5" "aiohttp>=3.9,<4" tzdata || { rollback; die "pip install нашуд"; }
+    fi
     echo "$REQ_HASH" > "$CODE/.venv/.req"
 fi
 
