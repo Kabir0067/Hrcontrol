@@ -253,6 +253,15 @@ def _kb_cancel_only() -> InlineKeyboardMarkup:
     return kb
 
 
+def _kb_work_attendance(attendance_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.row(
+        InlineKeyboardButton("✅ Бале, омадам", callback_data=f"w:y:{attendance_id}"),
+        InlineKeyboardButton("📝 Не, наомадам", callback_data=f"w:n:{attendance_id}"),
+    )
+    return kb
+
+
 def _kb_admin_decision(req_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(InlineKeyboardButton("✅ Иҷозат", callback_data=f"d:a:{req_id}"),
@@ -620,8 +629,9 @@ def register_handlers(bot: AsyncTeleBot) -> None:
     @bot.message_handler(commands=["admin", "panel"], func=_private)
     async def cmd_admin(message: Message):
         db.clear_state(message.from_user.id)
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("📊 Кушодани панел", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
+        kb = InlineKeyboardMarkup(row_width=1)
+        kb.add(InlineKeyboardButton("📊 Кушодани админ-панел", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
+        kb.add(InlineKeyboardButton("🌐 Кушодан дар браузер", url=cfg.WEBAPP_URL))
         await _safe(bot.send_message(
             message.chat.id,
             "🔐 <b>Панели маъмурият</b>\n\n"
@@ -933,7 +943,52 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                 reply_markup=_kb_admin_after(req_id),
             ))
 
-    # ── санҷиши омадан ──────────────────────────────────────────────────
+    # ── ҳозиршавӣ аз рӯи вақти кори ҳаррӯза ──────────────────────────────
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("w:"))
+    async def cb_work_attendance(call: CallbackQuery):
+        try:
+            _, answer, raw_id = call.data.split(":", 2)
+            attendance_id = int(raw_id)
+        except (TypeError, ValueError):
+            await _safe(bot.answer_callback_query(call.id, "Маълумот нодуруст аст"))
+            return
+        record = db.get_attendance(attendance_id)
+        if not record or record["user_id"] != call.from_user.id:
+            await _safe(bot.answer_callback_query(call.id, "Ин савол барои шумо нест"))
+            return
+        if record["status"] != "pending":
+            await _safe(bot.answer_callback_query(call.id, "Ҷавоби шумо аллакай сабт шуд"))
+            return
+
+        if answer == "y":
+            if not db.set_attendance_present(attendance_id):
+                await _safe(bot.answer_callback_query(call.id, "Ҷавоб аллакай сабт шудааст"))
+                return
+            clock = cfg.now().strftime("%H:%M")
+            await _safe(bot.answer_callback_query(call.id, "Омадани шумо сабт шуд"))
+            await _safe(bot.edit_message_text(
+                f"✅ <b>Омадани шумо сабт шуд.</b>\n\nСоати омадан: <b>{clock}</b>. Рӯзи кори хуб!",
+                chat_id=call.message.chat.id, message_id=call.message.message_id,
+            ))
+            await _safe(bot.send_message(
+                GROUP_ID,
+                f"✅ <b>{_esc(_short_name(record['name']))}</b> ба кор омад — <b>{clock}</b> имрӯз.",
+            ))
+            return
+
+        if answer != "n":
+            await _safe(bot.answer_callback_query(call.id, "Интихоб нодуруст аст"))
+            return
+        db.set_state(call.from_user.id, {"step": "work_absence_reason", "attendance_id": attendance_id})
+        await _safe(bot.answer_callback_query(call.id))
+        await _safe(bot.edit_message_text(
+            "📝 <b>Фаҳмо.</b> Лутфан сабаби наомаданатонро нависед:",
+            chat_id=call.message.chat.id, message_id=call.message.message_id,
+            reply_markup=_kb_cancel_only(),
+        ))
+
+    # ── санҷиши омадан аз дархости «дер мекунам» ─────────────────────────
 
     @bot.callback_query_handler(
         func=lambda c: c.data.startswith("a:") or c.data.startswith("arrival_arrived_") or c.data.startswith("arrival_notyet_")
@@ -1083,6 +1138,45 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                 ))
                 return
             await _finish_arrival_delay(bot, message.chat.id, message.from_user, state, minutes)
+            return
+
+        if step == "work_absence_reason":
+            if not text:
+                await _safe(bot.send_message(message.chat.id, "Лутфан сабаби наомаданро нависед."))
+                return
+            state["reason"] = text[:1000]
+            state["step"] = "work_absence_eta"
+            db.set_state(uid, state)
+            await _safe(bot.send_message(
+                message.chat.id,
+                "🕐 <b>Кай ба кор меоед?</b>\nМасалан: <i>соати 10:30</i>, <i>пагоҳ</i> ё <i>имрӯз намеоям</i>.",
+                reply_markup=_kb_cancel_only(),
+            ))
+            return
+
+        if step == "work_absence_eta":
+            if not text:
+                await _safe(bot.send_message(message.chat.id, "Вақти тахминии омаданро нависед."))
+                return
+            attendance_id = int(state.get("attendance_id", 0))
+            record = db.get_attendance(attendance_id)
+            if not record or record["user_id"] != uid or not db.set_attendance_absent(
+                attendance_id, state.get("reason", ""), text
+            ):
+                db.clear_state(uid)
+                await _safe(bot.send_message(message.chat.id, "Ин савол дигар фаъол нест."))
+                return
+            db.clear_state(uid)
+            await _safe(bot.send_message(
+                message.chat.id,
+                "✅ Сабаб ва вақти тахминии шумо сабт шуд. Ташаккур барои хабар додан.",
+            ))
+            await _safe(bot.send_message(
+                GROUP_ID,
+                f"📝 <b>{_esc(_short_name(record['name']))}</b> имрӯз наомад.\n"
+                f"Сабаб: <i>{_esc(state.get('reason', '—'))}</i>\n"
+                f"Меояд: <b>{_esc(text[:300])}</b>",
+            ))
             return
 
         if step in ("reason", "minutes", "confirm", "arrival_minutes"):
@@ -1266,6 +1360,28 @@ async def process_arrival_checks(bot: AsyncTeleBot) -> None:
 
         db.mark_check_asked(check_id, sent.message_id)
         log.info("🔔 Arrival check #%d → %s", check_id, check["name"])
+
+
+async def process_work_attendance(bot: AsyncTeleBot) -> None:
+    """Мувофиқи вақти кори аз панел гузошташуда аз ҳар корманд мепурсад.
+
+    SQLite пеш аз фиристодан сабт месозад, бинобар ин restart-и бот ё коркарди
+    такрорӣ ягон огоҳии дуюм намефиристад. Якшанбе дар database санҷида мешавад.
+    """
+    for record in db.create_due_attendance():
+        sent = await _safe(bot.send_message(
+            record["user_id"],
+            "🔔 <b>Вақти корӣ расид.</b>\n\nШумо имрӯз ба кор омадед? "
+            "Лутфан ҷавоб диҳед, то ҳозиршавӣ сабт шавад.",
+            reply_markup=_kb_work_attendance(record["id"]),
+        ))
+        # Ҳатто агар корбар ботро баста бошад, як бор кӯшиш кифоя аст: гурӯҳро
+        # спам намекунем ва дар ҷадвал ҳолати «дар интизорӣ» мемонад.
+        db.mark_attendance_prompted(record["id"])
+        if sent is None:
+            log.warning("Ҳозиршавӣ ба %s фиристода нашуд", record["user_id"])
+        else:
+            log.info("Огоҳии ҳозиршавӣ #%d → %s", record["id"], record["name"])
 
 
 async def housekeeping() -> None:

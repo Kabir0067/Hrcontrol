@@ -130,6 +130,26 @@ async def run_tests():
         raw = await r.read()
         check("db backup download", r.status == 200 and raw[:15] == b"SQLite format 3")
 
+        # ── вақти корӣ ва ҳозиршавӣ (даври корӣ 5 → 4)
+        r = await c.post("/api/work-schedule", headers=H, json={"time": "08:30"})
+        check("work schedule saved", r.status == 200 and (await r.json())["time"] == "08:30")
+        r = await c.post("/api/work-schedule", headers=H, json={"time": "25:99"})
+        check("work schedule validates time", r.status == 400)
+        due = db.create_due_attendance()
+        # Ҳангоми иҷрои тест баъди 08:30 ҳамаи кормандони seed бояд сабт шаванд;
+        # агар тест пеш аз он оғоз шавад, ин функсия қасдан чизе намефиристад.
+        if due:
+            check("daily attendance created once", len(due) == len(NAMES))
+            check("attendance present recorded", db.set_attendance_present(due[0]["id"]))
+            check("attendance absent recorded", db.set_attendance_absent(due[1]["id"], "Бемор", "Пагоҳ"))
+            for item in due:
+                db.mark_attendance_prompted(item["id"])
+            check("daily attendance never duplicates", db.create_due_attendance() == [])
+        r = await c.get("/api/attendance", headers=H)
+        attendance = await r.json()
+        check("attendance report has work-month 5→4", r.status == 200 and
+              attendance["period"]["start"].endswith("-05") and attendance["period"]["end"].endswith("-04"))
+
         # ── нест кардан
         first = (await (await c.get("/api/requests?limit=3", headers=H)).json())["items"]
         r = await c.delete(f"/api/requests/{first[0]['id']}", headers=H)
@@ -138,24 +158,22 @@ async def run_tests():
         check("delete selected (2)", (await r.json())["deleted"] == 2)
         many = [x["id"] for x in (await (await c.get("/api/requests?limit=30", headers=H)).json())["items"]]
         r = await c.post("/api/requests/delete", headers=H, json={"ids": many})
-        check("delete >20 needs password", r.status == 403)
-        r = await c.post("/api/requests/delete", headers=H, json={"filters": {"type": "absent"}, "password": "8520"})
+        check("delete >20 without password", r.status == 200)
+        r = await c.post("/api/requests/delete", headers=H, json={"filters": {"type": "absent"}})
         j = await r.json()
         check("delete by filter", r.status == 200 and j["deleted"] > 0 and j["backup"])
         cnt = (await (await c.get("/api/requests?type=absent", headers=H)).json())["total"]
         check("filtered really gone", cnt == 0)
-        r = await c.post("/api/workers/1007/delete", headers=H, json={"password": "wrong"})
-        check("delete worker wrong pass → 403", r.status == 403)
-        r = await c.post("/api/workers/1007/delete", headers=H, json={"password": "8520"})
+        r = await c.post("/api/workers/1007/delete", headers=H, json={})
         check("delete worker", r.status == 200 and (await (await c.get("/api/workers/1007", headers=H)).read()) and
               db.get_worker_detail(1007) is None)
 
         # ── иваз кардани логин/рамз
-        r = await c.post("/api/account", headers=H, json={"current_password": "x", "new_login": "admin", "new_password": "Secret123"})
-        check("account change wrong current → 403", r.status == 403)
-        r = await c.post("/api/account", headers=H, json={"current_password": "8520", "new_login": "admin", "new_password": "12345"})
+        r = await c.post("/api/account", headers=H, json={"new_login": "admin", "new_password": "Secret123", "new_password_confirm": "different"})
+        check("account change requires repeated password", r.status == 400)
+        r = await c.post("/api/account", headers=H, json={"new_login": "admin", "new_password": "12345", "new_password_confirm": "12345"})
         check("account weak password rejected", r.status == 400)
-        r = await c.post("/api/account", headers=H, json={"current_password": "8520", "new_login": "admin", "new_password": "Secret123"})
+        r = await c.post("/api/account", headers=H, json={"new_login": "admin", "new_password": "Secret123", "new_password_confirm": "Secret123"})
         j = await r.json()
         check("account change ok", r.status == 200 and j["token"])
         r = await c.get("/api/dashboard", headers=H)
@@ -171,14 +189,14 @@ async def run_tests():
         check("account info", acc["login"] == "admin" and acc["source"] == "panel")
 
         # ── тозакунӣ
-        r = await c.post("/api/wipe", headers=H, json={"password": "Secret123", "scope": "requests", "confirm": "no"})
+        r = await c.post("/api/wipe", headers=H, json={"scope": "requests", "confirm": "no"})
         check("wipe needs confirm word", r.status == 400)
         old = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-        r = await c.post("/api/wipe", headers=H, json={"password": "Secret123", "before": old, "confirm": "ТОЗА"})
+        r = await c.post("/api/wipe", headers=H, json={"before": old, "confirm": "ТОЗА"})
         j = await r.json()
         rem = (await (await c.get("/api/requests", headers=H)).json())["items"]
         check("wipe before date", r.status == 200 and all(x["created_at"][:10] > old for x in rem))
-        r = await c.post("/api/wipe", headers=H, json={"password": "Secret123", "scope": "all", "confirm": "тоза"})
+        r = await c.post("/api/wipe", headers=H, json={"scope": "all", "confirm": "тоза"})
         a = await (await c.get("/api/analytics", headers=H)).json()
         check("wipe all", r.status == 200 and a["summary"]["total"] == 0 and a["daily"] == [])
         check("settings survive wipe", db.get_setting("admin_login") == "admin")

@@ -356,18 +356,19 @@ async def handle_account(request: web.Request) -> web.Response:
 @_guard
 async def handle_account_update(request: web.Request) -> web.Response:
     data = await _body(request)
-    denied = _confirm_password(request, {"password": data.get("current_password", "")})
-    if denied:
-        return denied
-
     new_login = str(data.get("new_login", "")).strip() or _admin_login()
     new_password = str(data.get("new_password", ""))
+    password_confirm = str(data.get("new_password_confirm", ""))
 
     if not re.fullmatch(r"[A-Za-z0-9_.@\-]{3,32}", new_login):
         return _err("Логин: 3–32 аломат (ҳарфи лотинӣ, рақам, _ . @ -)")
-    if new_password and len(new_password) < 6:
+    if not new_password:
+        return _err("Рамзи навро ворид кунед")
+    if new_password != password_confirm:
+        return _err("Ду рамзи нав якхела нестанд")
+    if len(new_password) < 6:
         return _err("Рамзи нав бояд ақаллан 6 аломат бошад")
-    if new_password and new_password.isdigit() and len(new_password) < 8:
+    if new_password.isdigit() and len(new_password) < 8:
         return _err("Рамзи танҳо рақамӣ бояд ақаллан 8 аломат бошад")
 
     values = {
@@ -376,11 +377,7 @@ async def handle_account_update(request: web.Request) -> web.Response:
         # Ҳамаи токенҳои кӯҳна (дигар телефонҳо/браузерҳо) беэътибор мешаванд
         "token_version": secrets.token_hex(6),
     }
-    if new_password:
-        values["admin_pass_hash"] = _hash_password(new_password)
-    elif not db.get_setting("admin_pass_hash"):
-        # Логин иваз шуд, рамз не — рамзи ҷориро (аз .env) ба база мегузаронем
-        values["admin_pass_hash"] = _hash_password(str(data.get("current_password", "")))
+    values["admin_pass_hash"] = _hash_password(new_password)
 
     db.set_settings(values)
     log.warning("🔐 Логин/рамзи панел иваз шуд (логин: %s, аз %s)", new_login, _client_ip(request))
@@ -455,6 +452,32 @@ async def handle_analytics(request: web.Request) -> web.Response:
 
 
 @_guard
+async def handle_work_schedule(request: web.Request) -> web.Response:
+    return _json({"time": db.get_work_start_time(), "enabled": bool(db.get_work_start_time())})
+
+
+@_guard
+async def handle_work_schedule_update(request: web.Request) -> web.Response:
+    data = await _body(request)
+    value = str(data.get("time", "")).strip()
+    if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+        return _err("Вақтро бо шакли 08:30 ворид кунед")
+    db.set_work_start_time(value)
+    return _json({
+        "ok": True, "time": value, "enabled": bool(value),
+        "message": "Огоҳии вақти корӣ фаъол шуд" if value else "Огоҳии вақти корӣ хомӯш шуд",
+    })
+
+
+@_guard
+async def handle_attendance(request: web.Request) -> web.Response:
+    period = request.query.get("period", "")
+    if period and not re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", period):
+        return _err("Моҳи корӣ нодуруст аст")
+    return _json(db.get_attendance_report(period or None))
+
+
+@_guard
 async def handle_decision(request: web.Request) -> web.Response:
     if BOT is None:
         return _err("Бот дастрас нест", 503)
@@ -507,19 +530,12 @@ async def handle_requests_delete(request: web.Request) -> web.Response:
 
     if isinstance(ids, list) and ids:
         ids = [_int(i) for i in ids if _int(i) > 0][:5000]
-        if len(ids) > 20:                       # нест кардани зиёд — бо рамз
-            denied = _confirm_password(request, data)
-            if denied:
-                return denied
         backup = _make_backup("selected") if len(ids) > 1 else None
         removed = db.delete_requests(ids)
         return _json({"ok": True, "deleted": removed, "backup": backup,
                       "message": f"{removed} дархост нест шуд"})
 
     if isinstance(data.get("filters"), dict):
-        denied = _confirm_password(request, data)
-        if denied:
-            return denied
         backup = _make_backup("filtered")
         removed = db.delete_filtered(**_filters(data["filters"]))
         return _json({"ok": True, "deleted": removed, "backup": backup,
@@ -530,10 +546,7 @@ async def handle_requests_delete(request: web.Request) -> web.Response:
 
 @_guard
 async def handle_worker_delete(request: web.Request) -> web.Response:
-    data = await _body(request)
-    denied = _confirm_password(request, data)
-    if denied:
-        return denied
+    await _body(request)
     backup = _make_backup("worker")
     result = db.delete_worker(_int(request.match_info["user_id"]))
     return _json({"ok": True, **result, "backup": backup,
@@ -543,9 +556,6 @@ async def handle_worker_delete(request: web.Request) -> web.Response:
 @_guard
 async def handle_wipe(request: web.Request) -> web.Response:
     data = await _body(request)
-    denied = _confirm_password(request, data)
-    if denied:
-        return denied
     if str(data.get("confirm", "")).strip().upper() != "ТОЗА":
         return _err("Барои тасдиқ калимаи ТОЗА-ро нависед")
 
@@ -669,6 +679,9 @@ def build_app() -> web.Application:
 
     r.add_get("/api/dashboard", handle_dashboard)
     r.add_get("/api/analytics", handle_analytics)
+    r.add_get("/api/work-schedule", handle_work_schedule)
+    r.add_post("/api/work-schedule", handle_work_schedule_update)
+    r.add_get("/api/attendance", handle_attendance)
     r.add_get("/api/stats", handle_stats)
     r.add_get("/api/export.csv", handle_export)
 

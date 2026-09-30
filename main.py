@@ -31,6 +31,7 @@ from handlers import (
     housekeeping,
     notify_overdue,
     process_arrival_checks,
+    process_work_attendance,
     register_handlers,
     send_reminders,
 )
@@ -141,7 +142,7 @@ async def scheduler_task() -> None:
     log.info("🔔 Ҳалқаи ёдоварӣ оғоз шуд (ҳар %d сония)", cfg.LOOP_INTERVAL)
     tick = 0
     while True:
-        for job in (send_reminders, notify_overdue, process_arrival_checks):
+        for job in (send_reminders, notify_overdue, process_arrival_checks, process_work_attendance):
             try:
                 await job(bot)
             except asyncio.CancelledError:

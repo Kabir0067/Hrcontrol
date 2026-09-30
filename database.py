@@ -14,7 +14,7 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Iterator, Optional
 
 import config as cfg
@@ -129,6 +129,28 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Сабти ҳозиршавии ҳаррӯза.  Аз дархостҳои «дер мекунам» ҷудо аст:
+-- як корманд барои як рӯзи корӣ танҳо як сабт дорад.
+CREATE TABLE IF NOT EXISTS attendance (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL,
+    name           TEXT    NOT NULL,
+    work_date      TEXT    NOT NULL,
+    scheduled_at   TEXT    NOT NULL,
+    status         TEXT    NOT NULL DEFAULT 'pending'
+                         CHECK(status IN ('pending','present','absent')),
+    prompted_at    TEXT,
+    arrived_at     TEXT,
+    reason         TEXT,
+    eta            TEXT,
+    created_at     TEXT    NOT NULL,
+    updated_at     TEXT    NOT NULL,
+    UNIQUE(user_id, work_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_period ON attendance(work_date, user_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_pending ON attendance(status, prompted_at);
 """
 
 # Сутунҳое, ки метавонанд дар базаи кӯҳна набошанд.
@@ -532,6 +554,150 @@ def set_check_delayed(check_id: int, reason: str, extra_minutes: int) -> bool:
         return cur.rowcount > 0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ҳозиршавии ҳаррӯза (вақти корӣ аз админка)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_work_start_time() -> str:
+    """Вақти оғози кор дар шакли HH:MM, ё сатри холӣ агар огоҳӣ хомӯш бошад."""
+    value = (get_setting("work_start_time", "") or "").strip()
+    return value if len(value) == 5 and value[2] == ":" else ""
+
+
+def set_work_start_time(value: str) -> None:
+    """Сатри холӣ огоҳии автоматиро хомӯш мекунад."""
+    set_settings({"work_start_time": value})
+
+
+def create_due_attendance() -> list[dict]:
+    """Сабтҳои имрӯзаро месозад ва танҳо онҳоеро бармегардонад, ки ҳанӯз пурсида нашудаанд.
+
+    UNIQUE(user_id, work_date) ин амалро барои restart ва чанд даъвати ҳамзамон
+    бехатар мекунад. Якшанбе (weekday == 6) рӯзи истироҳат аст.
+    """
+    start_time = get_work_start_time()
+    now = cfg.now()
+    if not start_time or now.weekday() == 6:
+        return []
+    try:
+        hour, minute = (int(x) for x in start_time.split(":"))
+        scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except (TypeError, ValueError):
+        return []
+    if now < scheduled:
+        return []
+
+    day = now.strftime(cfg.DATE_FMT)
+    scheduled_at = cfg.to_str(scheduled)
+    stamp = cfg.now_str()
+    with _tx() as conn:
+        employees = _rows(conn.execute(
+            "SELECT user_id, name FROM employees ORDER BY name COLLATE NOCASE"
+        ))
+        for employee in employees:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO attendance
+                    (user_id, name, work_date, scheduled_at, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (employee["user_id"], employee["name"], day, scheduled_at, stamp, stamp),
+            )
+        rows = _rows(conn.execute(
+            """
+            SELECT * FROM attendance
+             WHERE work_date = ? AND status = 'pending' AND prompted_at IS NULL
+             ORDER BY id
+            """, (day,)
+        ))
+    return rows
+
+
+def mark_attendance_prompted(attendance_id: int) -> bool:
+    with _tx() as conn:
+        cur = conn.execute(
+            """UPDATE attendance SET prompted_at = ?, updated_at = ?
+                 WHERE id = ? AND prompted_at IS NULL""",
+            (cfg.now_str(), cfg.now_str(), attendance_id),
+        )
+        return cur.rowcount > 0
+
+
+def get_attendance(attendance_id: int) -> Optional[dict]:
+    with _ro() as conn:
+        row = conn.execute("SELECT * FROM attendance WHERE id = ?", (attendance_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def set_attendance_present(attendance_id: int) -> bool:
+    stamp = cfg.now_str()
+    with _tx() as conn:
+        cur = conn.execute(
+            """UPDATE attendance SET status = 'present', arrived_at = ?, updated_at = ?
+                 WHERE id = ? AND status = 'pending'""",
+            (stamp, stamp, attendance_id),
+        )
+        return cur.rowcount > 0
+
+
+def set_attendance_absent(attendance_id: int, reason: str, eta: str) -> bool:
+    with _tx() as conn:
+        cur = conn.execute(
+            """UPDATE attendance SET status = 'absent', reason = ?, eta = ?, updated_at = ?
+                 WHERE id = ? AND status = 'pending'""",
+            (reason.strip()[:1000], eta.strip()[:300], cfg.now_str(), attendance_id),
+        )
+        return cur.rowcount > 0
+
+
+def work_period(anchor: str | None = None) -> tuple[str, str]:
+    """Моҳи корӣ: аз рӯзи 5 то рӯзи 4-уми моҳи баъдӣ."""
+    try:
+        source = datetime.strptime(anchor, "%Y-%m").date() if anchor else cfg.now().date()
+    except (TypeError, ValueError):
+        source = cfg.now().date()
+    start = date(source.year, source.month, 5)
+    if not anchor and source.day < 5:
+        start = date(source.year - 1, 12, 5) if source.month == 1 else date(source.year, source.month - 1, 5)
+    if anchor:
+        # anchor ҳамеша моҳи оғози давр аст, масалан 2026-09 → 05.09–04.10
+        start = date(source.year, source.month, 5)
+    next_month = date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 5)
+    end = next_month - timedelta(days=1)
+    return start.isoformat(), end.isoformat()
+
+
+def get_attendance_report(period: str | None = None) -> dict:
+    start, end = work_period(period)
+    with _ro() as conn:
+        rows = _rows(conn.execute(
+            """SELECT * FROM attendance WHERE work_date >= ? AND work_date <= ?
+                 ORDER BY work_date DESC, name COLLATE NOCASE""", (start, end)
+        ))
+        employees = _rows(conn.execute(
+            "SELECT user_id, name FROM employees ORDER BY name COLLATE NOCASE"
+        ))
+    by_user: dict[int, dict] = {
+        e["user_id"]: {**e, "present": 0, "absent": 0, "pending": 0, "records": []}
+        for e in employees
+    }
+    for row in rows:
+        item = by_user.setdefault(row["user_id"], {
+            "user_id": row["user_id"], "name": row["name"], "present": 0,
+            "absent": 0, "pending": 0, "records": [],
+        })
+        item[row["status"]] = item.get(row["status"], 0) + 1
+        item["records"].append(row)
+    totals = {state: sum(1 for r in rows if r["status"] == state) for state in ("present", "absent", "pending")}
+    return {
+        "period": {"start": start, "end": end},
+        "schedule": get_work_start_time(),
+        "summary": {"employees": len(employees), "records": len(rows), **totals},
+        "workers": list(by_user.values()),
+        "records": rows,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────
 #  Оморҳо (барои панели маъмурият)
 # ──────────────────────────────────────────────────────────────────────────
@@ -812,6 +978,7 @@ def delete_worker(user_id: int) -> dict:
     removed = delete_requests(ids)
     with _tx() as conn:
         conn.execute("DELETE FROM arrival_checks WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM attendance WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
         emp = conn.execute("DELETE FROM employees WHERE user_id = ?", (user_id,)).rowcount or 0
     log.warning("🗑 Маълумоти корманд %s нест шуд (%d дархост)", user_id, removed)
@@ -833,9 +1000,12 @@ def wipe(scope: str = "requests", before: str | None = None) -> dict:
                 "(SELECT id FROM requests WHERE created_at <= ?)", (stamp,))
             counts["requests"] = conn.execute(
                 "DELETE FROM requests WHERE created_at <= ?", (stamp,)).rowcount or 0
+            counts["attendance"] = conn.execute(
+                "DELETE FROM attendance WHERE work_date <= ?", (before,)).rowcount or 0
         else:
             conn.execute("DELETE FROM arrival_checks")
             counts["requests"] = conn.execute("DELETE FROM requests").rowcount or 0
+            counts["attendance"] = conn.execute("DELETE FROM attendance").rowcount or 0
             if scope == "all":
                 counts["employees"] = conn.execute("DELETE FROM employees").rowcount or 0
                 conn.execute("DELETE FROM user_states")

@@ -29,6 +29,7 @@ const ICON = {
   req: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
   team: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5.2a3.2 3.2 0 0 1 0 5.6M17.5 20a6.4 6.4 0 0 0-2-4.6"/></svg>',
   stats: '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  attendance: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 15l2.5 2.5L16 12"/></svg>',
   settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
@@ -73,6 +74,7 @@ const VIEWS = [
   { id: 'home',     label: 'Асосӣ',      sub: 'Манзараи имрӯза' },
   { id: 'req',      label: 'Дархостҳо',  sub: 'Ҳамаи муроҷиатҳо' },
   { id: 'team',     label: 'Кормандон',  sub: 'Омори шахсӣ' },
+  { id: 'attendance', label: 'Ҳозиршавӣ', sub: 'Вақти корӣ ва моҳи корӣ' },
   { id: 'stats',    label: 'Омор',       sub: 'Таҳлили муфассал' },
   { id: 'settings', label: 'Танзимот',   sub: 'Ҳисоб ва база' },
 ];
@@ -94,6 +96,7 @@ const S = {
   },
   team: { period: '30', from: '', to: '', q: '', sort: 'total', data: null, seq: 0 },
   stats: { period: '30', from: '', to: '', data: null, seq: 0 },
+  attendance: { period: '', data: null, seq: 0 },
   inited: {},
 };
 
@@ -429,7 +432,7 @@ function go(name, force = false) {
   if (name !== 'req') setSelecting(false);
   if (changed) window.scrollTo({ top: 0 });
 
-  const loaders = { home: loadHome, req: initRequests, team: initTeam, stats: initStats, settings: initSettings };
+  const loaders = { home: loadHome, req: initRequests, team: initTeam, attendance: initAttendance, stats: initStats, settings: initSettings };
   if (force || changed || !S.inited[name]) loaders[name]();
 }
 
@@ -438,6 +441,7 @@ function refreshCurrent() {
   S.inited[S.view] = false;
   if (S.view === 'req') loadRequests(true);
   else if (S.view === 'team') loadTeam();
+  else if (S.view === 'attendance') loadAttendance();
   else if (S.view === 'stats') loadStats();
   else go(S.view, true);
   refreshPending();
@@ -866,14 +870,13 @@ function updateSelbar() {
 async function deleteSelected() {
   const ids = [...S.req.selected];
   if (!ids.length) { toast('Аввал дархостҳоро интихоб кунед'); return; }
-  const needPass = ids.length > 20;
   const ok = await confirmDialog({
     title: `${ids.length} дархост нест карда шавад?`,
     text: 'Ин амал бозгашт надорад. Пеш аз нест кардан нусхаи эҳтиётии база худкор сохта мешавад.',
-    okText: 'Нест кардан', danger: true, password: needPass,
+    okText: 'Нест кардан', danger: true,
   });
   if (!ok) return;
-  const res = await post('/api/requests/delete', { ids, password: ok.password });
+  const res = await post('/api/requests/delete', { ids });
   if (!res) return;
   haptic('success');
   toast(res.message, 'ok');
@@ -889,10 +892,10 @@ async function deleteFiltered() {
     text: hasFilters()
       ? 'Ҳамаи дархостҳое, ки ба филтрҳои ҷорӣ мувофиқанд, нест мешаванд. Нусхаи эҳтиётӣ худкор сохта мешавад.'
       : 'Филтр интихоб нашудааст — ҲАМАИ дархостҳо нест мешаванд! Нусхаи эҳтиётӣ худкор сохта мешавад.',
-    okText: 'Нест кардан', danger: true, password: true,
+    okText: 'Нест кардан', danger: true,
   });
   if (!ok) return;
-  const res = await post('/api/requests/delete', { filters: reqFilters(), password: ok.password });
+  const res = await post('/api/requests/delete', { filters: reqFilters() });
   if (!res) return;
   haptic('success');
   toast(res.message, 'ok');
@@ -1123,16 +1126,94 @@ async function openWorker(uid) {
     const ok = await confirmDialog({
       title: `Ҳамаи маълумоти ${shortName(d.name)} нест шавад?`,
       text: 'Ҳамаи дархостҳо ва омори ин корманд (барои ҳама вақт) нест мешаванд. Нусхаи эҳтиётӣ худкор сохта мешавад.',
-      okText: 'Нест кардан', danger: true, password: true,
+      okText: 'Нест кардан', danger: true,
     });
     if (!ok) return;
-    const res = await post(`/api/workers/${d.user_id}/delete`, { password: ok.password });
+    const res = await post(`/api/workers/${d.user_id}/delete`, {});
     if (!res) return;
     haptic('success');
     toast(res.message, 'ok');
     closeSheet();
     afterDataChange();
   });
+}
+
+/* ══════════════ ҲОЗИРШАВӢ ══════════════ */
+
+function attendanceStatus(status) {
+  return {
+    present: '<span class="tag tag--ok">Омад</span>',
+    absent: '<span class="tag tag--danger">Наомад</span>',
+    pending: '<span class="tag tag--warn">Ҷавоб надод</span>',
+  }[status] || '<span class="tag">—</span>';
+}
+
+function initAttendance() {
+  S.inited.attendance = true;
+  const root = $('#view-attendance');
+  if (!root.dataset.built) {
+    root.innerHTML = `
+      <div class="grid-2">
+        <div class="card"><div class="card__head"><h2>🕐 Вақти оғози кор</h2></div>
+          <div class="card__body"><form class="stack" id="work-time-form">
+            <p class="muted" style="margin:0">Дар ин вақт бот ба ҳамаи кормандон саволи ҳозиршавӣ мефиристад. Якшанбе огоҳӣ намеравад.</p>
+            <label class="field"><span class="field__label">Вақт</span><input class="input" id="work-time" type="time"></label>
+            <div style="display:flex;gap:8px"><button class="btn btn--primary" type="submit">Сабт кардан</button><button class="btn btn--ghost" type="button" id="work-time-clear">Хомӯш кардан</button></div>
+          </form></div></div>
+        <div class="card"><div class="card__head"><h2>📅 Моҳи корӣ</h2></div>
+          <div class="card__body stack"><p class="muted" style="margin:0">Ҳар давр аз рӯзи 5-уми моҳ то рӯзи 4-уми моҳи дигар ҳисоб мешавад.</p>
+            <label class="field"><span class="field__label">Моҳи оғоз</span><input class="input" id="attendance-period" type="month"></label>
+          </div></div>
+      </div>
+      <div id="attendance-body" class="grid" style="margin-top:14px">${skel(4)}</div>`;
+    root.dataset.built = '1';
+    $('#work-time-form').addEventListener('submit', saveWorkTime);
+    $('#work-time-clear').addEventListener('click', () => saveWorkTime(null, ''));
+    $('#attendance-period').addEventListener('change', (e) => { S.attendance.period = e.target.value; loadAttendance(); });
+  }
+  loadAttendance();
+}
+
+async function saveWorkTime(e, value) {
+  if (e && e.preventDefault) e.preventDefault();
+  const time = value !== undefined ? value : $('#work-time').value;
+  const res = await post('/api/work-schedule', { time });
+  if (!res) return;
+  haptic('success'); toast(res.message, 'ok');
+  loadAttendance();
+}
+
+async function loadAttendance() {
+  const root = $('#view-attendance');
+  if (!root || !root.dataset.built) return;
+  const seq = ++S.attendance.seq;
+  const body = $('#attendance-body');
+  body.innerHTML = skel(4);
+  const d = await api(`/api/attendance?${qs({ period: S.attendance.period })}`);
+  if (seq !== S.attendance.seq || !d) return;
+  S.attendance.data = d;
+  $('#work-time').value = d.schedule || '';
+  $('#attendance-period').value = d.period.start.slice(0, 7);
+  const s = d.summary;
+  const workers = d.workers.map((w) => {
+    const records = w.records.slice(0, 8).map((r) => `<tr>
+      <td>${esc(fmtDateShort(r.work_date))}</td><td>${attendanceStatus(r.status)}</td>
+      <td>${r.arrived_at ? esc(fmtClock(r.arrived_at)) : '—'}</td>
+      <td>${r.reason ? esc(r.reason) : '—'}${r.eta ? `<small class="muted"> · ${esc(r.eta)}</small>` : ''}</td>
+    </tr>`).join('');
+    return `<div class="card"><div class="card__head"><h2>${esc(shortName(w.name))}</h2><span class="card__note">${w.present} омад · ${w.absent} наомад · ${w.pending} интизорӣ</span></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Рӯз</th><th>Ҳолат</th><th>Вақт</th><th>Сабаб / кай меояд</th></tr></thead>
+      <tbody>${records || '<tr><td colspan="4" class="muted">Дар ин давр сабт нест</td></tr>'}</tbody></table></div></div>`;
+  }).join('');
+  body.innerHTML = `
+    <div class="kpis">
+      ${kpi('Кормандон', s.employees, 'дар рӯйхат', ICON.team, 'info')}
+      ${kpi('Омаданд', s.present, 'сабти ҳозиршавӣ', ICON.check, 'ok')}
+      ${kpi('Наомаданд', s.absent, 'бо сабаб', ICON.alert, 'danger')}
+      ${kpi('Дар интизорӣ', s.pending, 'ҷавоб надодаанд', ICON.clock, 'warn')}
+    </div>
+    <div class="resultbar"><span>Давр: <b>${esc(fmtDateShort(d.period.start))} — ${esc(fmtDateShort(d.period.end))}</b></span><span>${s.records} сабт</span></div>
+    <div class="grid">${workers || emptyState('Корманд ҳоло нест', 'Корманд баъд аз пахши /start ба рӯйхат дохил мешавад.', ICON.team)}</div>`;
 }
 
 /* ══════════════ ОМОР ══════════════ */
@@ -1307,12 +1388,9 @@ async function initSettings() {
             <label class="field"><span class="field__label">Рамзи нав</span>
               <span class="field__wrap"><input id="acc-new" type="password" autocomplete="new-password" placeholder="ақаллан 6 аломат">
               <button type="button" class="field__eye" data-eye="acc-new" aria-label="Нишон додан">${ICON.lock}</button></span>
-              <span class="field__hint">Холӣ монед, агар танҳо логинро иваз мекунед</span></label>
+              <span class="field__hint">Логин ва рамзи навро ҳамроҳ иваз кунед</span></label>
             <label class="field"><span class="field__label">Рамзи нав — такрор</span>
               <input id="acc-new2" type="password" autocomplete="new-password"></label>
-            <label class="field"><span class="field__label">Рамзи ҷорӣ (барои тасдиқ)</span>
-              <span class="field__wrap"><input id="acc-cur" type="password" autocomplete="current-password" required>
-              <button type="button" class="field__eye" data-eye="acc-cur" aria-label="Нишон додан">${ICON.lock}</button></span></label>
             <div id="acc-err" class="alert alert--danger" hidden></div>
             <button class="btn btn--primary btn--block" type="submit" id="acc-save">Сабт кардан</button>
           </form>
@@ -1349,7 +1427,7 @@ async function initSettings() {
       <div class="card danger-zone span-2">
         <div class="card__head"><h2>⚠️ Тоза кардани база</h2></div>
         <div class="card__body stack">
-          <p class="sheet__text" style="margin:0">Ҳар амал рамзро талаб мекунад ва пеш аз он нусхаи эҳтиётӣ худкор сохта мешавад. Логин ва рамз нест намешаванд.</p>
+          <p class="sheet__text" style="margin:0">Барои нест кардан рамз пурсида намешавад. Пеш аз амал нусхаи эҳтиётӣ худкор сохта мешавад; логин ва рамз нест намешаванд.</p>
           <div class="setting-row" style="padding:0;border:0;flex-wrap:wrap">
             <div class="setting-row__text"><b>Дархостҳои кӯҳна</b><small>Ҳама дархостҳо то санаи интихобшуда (дохил)</small></div>
             <div style="display:flex;gap:8px;flex:1 1 260px">
@@ -1385,16 +1463,15 @@ async function saveAccount(e) {
   const newLogin = $('#acc-login').value.trim();
   const p1 = $('#acc-new').value;
   const p2v = $('#acc-new2').value;
-  const cur = $('#acc-cur').value;
   const fail = (m) => { err.textContent = m; err.hidden = false; haptic('error'); };
-  if (!cur) return fail('Рамзи ҷориро барои тасдиқ ворид кунед');
   if (!/^[A-Za-z0-9_.@-]{3,32}$/.test(newLogin)) return fail('Логин: 3–32 аломат (ҳарфи лотинӣ, рақам, _ . @ -)');
-  if (p1 && p1.length < 6) return fail('Рамзи нав бояд ақаллан 6 аломат бошад');
-  if (p1 && /^\d+$/.test(p1) && p1.length < 8) return fail('Рамзи танҳо рақамӣ бояд ақаллан 8 аломат бошад');
+  if (!p1) return fail('Рамзи навро ворид кунед');
+  if (p1.length < 6) return fail('Рамзи нав бояд ақаллан 6 аломат бошад');
+  if (/^\d+$/.test(p1) && p1.length < 8) return fail('Рамзи танҳо рақамӣ бояд ақаллан 8 аломат бошад');
   if (p1 !== p2v) return fail('Рамзҳои нав мувофиқ нестанд');
   const btn = $('#acc-save');
   btn.classList.add('is-loading');
-  const res = await post('/api/account', { current_password: cur, new_login: newLogin, new_password: p1 }, { raw: true, quiet: true });
+  const res = await post('/api/account', { new_login: newLogin, new_password: p1, new_password_confirm: p2v }, { raw: true, quiet: true });
   btn.classList.remove('is-loading');
   if (!res || res.error) return fail((res && res.error) || 'Алоқа нест');
   token = res.token;
@@ -1413,10 +1490,10 @@ async function doWipe(scope, before) {
   const ok = await confirmDialog({
     title: before ? 'Нест кардани дархостҳои кӯҳна' : scope === 'all' ? 'Тозакунии пурраи база' : 'Нест кардани ҳамаи дархостҳо',
     text: text + ' Нусхаи эҳтиётӣ худкор сохта мешавад.',
-    okText: 'Тоза кардан', danger: true, password: true, word: 'ТОЗА',
+    okText: 'Тоза кардан', danger: true, word: 'ТОЗА',
   });
   if (!ok) return;
-  const res = await post('/api/wipe', { scope, before: before || '', password: ok.password, confirm: ok.word });
+  const res = await post('/api/wipe', { scope, before: before || '', confirm: ok.word });
   if (!res) return;
   haptic('success');
   toast(`✅ ${res.message}`, 'ok');
