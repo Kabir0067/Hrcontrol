@@ -112,9 +112,10 @@ done
 # ── 6. нусхаи база пеш аз restart ──────────────────────────────────
 if [ -s "$DATA/softclub.db" ]; then
     SNAP="$DATA/backups/softclub_$(date +%Y%m%d_%H%M%S)_deploy.db"
-    "$CODE/.venv/bin/python3" -c "import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()" \
+    # аз номи hrcontrol — то файлҳои -wal/-shm-и root пайдо нашаванд
+    runuser -u "$APP" -- "$CODE/.venv/bin/python3" -c "import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()" \
         "$DATA/softclub.db" "$SNAP"
-    chown "$APP:$APP" "$SNAP" && chmod 640 "$SNAP"
+    chmod 640 "$SNAP"
     install -m 640 -o root -g "$APP" "$SNAP" "$VAULT/db/"
     ls -t "$VAULT"/db/softclub_*_deploy.db 2>/dev/null | tail -n +11 | xargs -r rm -f
     log "нусхаи база: $SNAP"
@@ -143,7 +144,7 @@ systemctl restart hrcontrol-watchdog.timer
 # ── 8. саломатӣ ────────────────────────────────────────────────────
 ok=""
 for _ in $(seq 1 45); do
-    if curl -fsS -m 5 -o /dev/null "$HEALTH_URL"; then ok=1; break; fi
+    if curl -fs -m 5 -o /dev/null "$HEALTH_URL"; then ok=1; break; fi
     sleep 2
 done
 if [ -z "$ok" ]; then

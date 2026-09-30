@@ -1720,6 +1720,10 @@ def restore_if_missing() -> str | None:
         except OSError:
             pass
     shutil.copy2(newest, DB_PATH)
+    try:
+        os.chmod(DB_PATH, 0o640)
+    except OSError:
+        pass
     log.warning("♻️ База набуд — аз нусхаи эҳтиётӣ барқарор шуд: %s", newest)
     return newest
 

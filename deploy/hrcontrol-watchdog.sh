@@ -95,6 +95,17 @@ if [ ! -s "$DATA/softclub.db" ]; then
         restart=1
     fi
 fi
+# Файл ҳаст, вале ҷадвалҳо нестанд (базаро ҳангоми кор нест карданд → SQLite холӣ сохт):
+# restart — бот ҳангоми оғоз онро канор гузошта, аз нусха барқарор мекунад.
+# (аз номи корбари hrcontrol — то файлҳои -wal/-shm-и root пайдо нашаванд)
+if [ -s "$DATA/softclub.db" ] && [ -x "$CODE/.venv/bin/python3" ] && ! runuser -u "$APP" -- "$CODE/.venv/bin/python3" -c "
+import sqlite3, sys
+c = sqlite3.connect('file:$DATA/softclub.db?mode=ro', uri=True, timeout=10)
+sys.exit(0 if c.execute(\"SELECT 1 FROM sqlite_master WHERE name='requests'\").fetchone() else 1)
+" >/dev/null 2>&1; then
+    log "база холӣ/вайрон аст → restart барои барқароркунӣ аз нусха"
+    restart=1
+fi
 # Сейф: нусхаи ҳаррӯза берун аз /var/lib (14-тои охирин)
 daily=$(ls -t "$DATA"/backups/softclub_*_daily.db 2>/dev/null | head -1)
 if [ -n "$daily" ] && [ ! -e "$VAULT/db/$(basename "$daily")" ]; then
