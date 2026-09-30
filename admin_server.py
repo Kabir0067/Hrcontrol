@@ -4,12 +4,12 @@ SoftClub / Hrcontrol — сервери панели маъмурият (aiohttp
 Хусусиятҳо:
   • /api/health — бе авторизатсия, барои мониторинг ва nginx;
   • JWT-и дуруст + маҳдудкунии кӯшишҳои вуруд;
+  • вуруди худкор аз Telegram Mini App (initData + админи гурӯҳи роҳбарият);
   • логин/рамзи панел аз худи панел иваз мешавад (дар база, бо PBKDF2);
     пас аз иваз ҳамаи сессияҳои кӯҳна беэътибор мешаванд;
-  • нест кардани дархостҳо (якто, интихобшуда, аз рӯи филтр), маълумоти
-    корманд ва тозакунии пурраи база — ҳамеша пас аз нусхаи эҳтиётии худкор;
-  • омори муфассал: сабабҳо, рӯзҳои ҳафта, соатҳо, кормандон, вақти ҷавоб;
-  • экспорти CSV (бо филтрҳо) ва боргирии нусхаи база.
+  • давомот: вақти корӣ, ҷадвали рӯз ва моҳи корӣ (5 → 4), ислоҳи дастӣ, CSV;
+  • нест кардан бе рамз — вале ҳамеша пас аз нусхаи эҳтиётии худкор;
+  • омори муфассал ва экспорти CSV.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import time
+import urllib.parse
 from collections import defaultdict
 
 from aiohttp import web
@@ -38,8 +39,12 @@ log = logging.getLogger("SoftClubBot")
 
 STATIC_DIR = cfg.STATIC_DIR
 STARTED_AT = time.time()
-BACKUP_DIR = os.path.join(str(cfg.BASE_DIR), "backups")
-BACKUP_KEEP = 30
+BACKUP_DIR = cfg.BACKUP_DIR
+BACKUP_KEEP = cfg.BACKUP_KEEP
+
+# Telegram user_id-ҳое, ки бе рамз ба панел медароянд (ғайр аз админҳои гурӯҳ).
+ADMIN_IDS = {int(x) for x in re.findall(r"-?\d+", os.environ.get("ADMIN_IDS", ""))}
+_tg_admin_cache: dict[int, tuple[float, bool]] = {}
 
 # ip → [timestamp, …] барои маҳдудкунии вуруд
 _login_hits: dict[str, list[float]] = defaultdict(list)
@@ -242,40 +247,53 @@ async def _body(request: web.Request) -> dict:
     return data
 
 
-def _confirm_password(request: web.Request, data: dict) -> web.Response | None:
-    """Барои амалҳои хатарнок рамзи ҷорӣ бояд аз нав ворид шавад."""
-    ip = _client_ip(request)
-    if _rate_limited(ip):
-        return _err("Кӯшишҳо зиёданд. Пас аз чанд дақиқа кӯшиш кунед.", 429)
-    password = str(data.get("password", ""))
-    stored = db.get_setting("admin_pass_hash")
-    ok = _check_hash(password, stored) if stored else (
-        bool(cfg.ADMIN_PASS) and hmac.compare_digest(password.encode(), cfg.ADMIN_PASS.encode()))
-    if not ok:
-        _login_hits[ip].append(time.time())
-        log.warning("🔒 Рамзи нодуруст ҳангоми тасдиқи амал аз %s", ip)
-        return _err("Рамз нодуруст аст", 403)
-    return None
-
-
 def _make_backup(tag: str) -> str | None:
-    """Нусхаи худкор пеш аз ҳар нест кардан. Охирин BACKUP_KEEP нигоҳ дошта мешаванд."""
-    try:
-        os.makedirs(BACKUP_DIR, exist_ok=True)
-        stamp = cfg.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(BACKUP_DIR, f"softclub_{stamp}_{tag}.db")
-        db.backup_to(path)
-        old = sorted(glob.glob(os.path.join(BACKUP_DIR, "softclub_*.db")))
-        for extra in old[:-BACKUP_KEEP]:
-            try:
-                os.remove(extra)
-            except OSError:
-                pass
-        log.info("💾 Нусхаи эҳтиётӣ: %s", path)
-        return os.path.basename(path)
-    except Exception as exc:
-        log.error("💾 Нусхаи эҳтиётӣ сохта нашуд: %s", exc)
+    """Нусхаи худкор пеш аз ҳар нест кардан (номи файл ё None)."""
+    path = db.make_backup(tag, BACKUP_DIR)
+    return os.path.basename(path) if path else None
+
+
+def _check_init_data(init_data: str) -> dict | None:
+    """Санҷиши имзои initData-и Telegram Mini App (HMAC-SHA256 бо токени бот)."""
+    if not init_data or not cfg.BOT_TOKEN:
         return None
+    try:
+        pairs = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+    except ValueError:
+        return None
+    received = pairs.pop("hash", "")
+    if not received:
+        return None
+    check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+    secret = hmac.new(b"WebAppData", cfg.BOT_TOKEN.encode(), hashlib.sha256).digest()
+    expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, received):
+        return None
+    try:
+        if time.time() - int(pairs.get("auth_date", "0")) > 86400:      # 24 соат
+            return None
+        user = json.loads(pairs.get("user", "{}"))
+    except (TypeError, ValueError):
+        return None
+    return user if isinstance(user, dict) and user.get("id") else None
+
+
+async def _is_tg_admin(user_id: int) -> bool:
+    """Админ = дар ADMIN_IDS ё админ/соҳиби гурӯҳи роҳбарият (кэш 5 дақиқа)."""
+    if user_id in ADMIN_IDS:
+        return True
+    hit = _tg_admin_cache.get(user_id)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    ok = False
+    if BOT is not None:
+        try:
+            member = await BOT.get_chat_member(cfg.GROUP_ID, user_id)
+            ok = getattr(member, "status", "") in ("creator", "administrator")
+        except Exception as exc:
+            log.info("Telegram-вуруд: санҷиши %s дар гурӯҳ нашуд (%s)", user_id, exc)
+    _tg_admin_cache[user_id] = (time.time(), ok)
+    return ok
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -294,6 +312,8 @@ async def handle_health(request: web.Request) -> web.Response:
 
     last_poll = float(getattr(BOT, "last_poll_ok", 0) or 0)
     poll_age = int(now - last_poll) if last_poll else None
+    conflict = float(getattr(BOT, "conflict_at", 0) or 0)
+    conflict_age = int(now - conflict) if conflict else None
     polling_ok = (
         (poll_age is not None and poll_age <= cfg.POLL_STALE_SEC)
         or (last_poll == 0 and uptime <= cfg.POLL_STALE_SEC)      # ҳанӯз оғоз мешавад
@@ -312,7 +332,9 @@ async def handle_health(request: web.Request) -> web.Response:
         "time": cfg.now_str(),
         "tz": cfg.TZ_NAME,
         "bot": BOT is not None,
-        "polling": {"ok": polling_ok, "last_update_age": poll_age},
+        "polling": {"ok": polling_ok, "last_update_age": poll_age,
+                    "conflict": conflict_age is not None and conflict_age < 900,
+                    "conflict_age": conflict_age},
         "db": state,
     }, 200 if healthy else 503)
 
@@ -344,12 +366,38 @@ async def handle_login(request: web.Request) -> web.Response:
     return _json({"token": _make_jwt({"user": login, "role": "admin"}), "user": login})
 
 
+async def handle_login_telegram(request: web.Request) -> web.Response:
+    """Вуруд бе рамз аз дохили Telegram — танҳо барои админҳои гурӯҳи роҳбарият."""
+    ip = _client_ip(request)
+    if _rate_limited(ip):
+        return _err("Кӯшишҳо зиёданд. Пас аз чанд дақиқа кӯшиш кунед.", 429)
+    try:
+        data = await request.json()
+    except Exception:
+        return _err("Маълумоти нодуруст")
+    user = _check_init_data(str((data or {}).get("init_data", "")))
+    if not user:
+        _login_hits[ip].append(time.time())
+        return _err("Telegram тасдиқ нашуд", 401)
+    uid = int(user["id"])
+    if not await _is_tg_admin(uid):
+        log.info("🔒 Telegram-вуруд рад шуд: %s (%s)", uid, user.get("first_name"))
+        return _err("Шумо админи гурӯҳи роҳбарият нестед — бо логин ва рамз ворид шавед", 403)
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or str(uid)
+    log.info("🔓 Вуруд ба панел аз Telegram: %s (%s)", name, uid)
+    return _json({"token": _make_jwt({"user": f"tg:{uid}", "name": name, "role": "admin"}),
+                  "user": name})
+
+
 @_guard
 async def handle_account(request: web.Request) -> web.Response:
+    who = _auth(request) or {}
     return _json({
         "login": _admin_login(),
         "source": "panel" if db.get_setting("admin_pass_hash") else "env",
         "changed_at": db.get_setting("admin_changed_at"),
+        "me": who.get("name") or who.get("user"),
+        "via": "telegram" if str(who.get("user", "")).startswith("tg:") else "password",
     })
 
 
@@ -452,29 +500,124 @@ async def handle_analytics(request: web.Request) -> web.Response:
 
 
 @_guard
+async def handle_overview(request: web.Request) -> web.Response:
+    return _json(db.get_overview())
+
+
+# ── Вақти корӣ ва давомот ──────────────────────────────────────────────
+
+@_guard
 async def handle_work_schedule(request: web.Request) -> web.Response:
-    return _json({"time": db.get_work_start_time(), "enabled": bool(db.get_work_start_time())})
+    return _json(db.get_schedule())
 
 
 @_guard
 async def handle_work_schedule_update(request: web.Request) -> web.Response:
     data = await _body(request)
-    value = str(data.get("time", "")).strip()
-    if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
-        return _err("Вақтро бо шакли 08:30 ворид кунед")
-    db.set_work_start_time(value)
-    return _json({
-        "ok": True, "time": value, "enabled": bool(value),
-        "message": "Огоҳии вақти корӣ фаъол шуд" if value else "Огоҳии вақти корӣ хомӯш шуд",
-    })
+    kwargs: dict = {}
+    if "time" in data:
+        value = str(data.get("time") or "").strip()
+        if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+            return _err("Вақтро ба шакли 08:30 нависед")
+        kwargs["time"] = value
+    if "days" in data:
+        days = data.get("days")
+        if not isinstance(days, list) or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
+            return _err("Рӯзҳои корӣ нодурустанд")
+        if not days:
+            return _err("Ақаллан як рӯзи кориро интихоб кунед")
+        kwargs["days"] = days
+    if "grace" in data:
+        grace = _int(data.get("grace"), -1)
+        if not 0 <= grace <= 120:
+            return _err("Муҳлат бояд аз 0 то 120 дақиқа бошад")
+        kwargs["grace"] = grace
+    if "report" in data:
+        kwargs["report"] = bool(data.get("report"))
+    sch = db.set_schedule(**kwargs)
+    if "time" in kwargs:
+        message = (f"Вақти корӣ: {sch['time']}. Кормандон ҳар рӯзи корӣ савол мегиранд"
+                   if sch["time"] else "Саволи ҳаррӯза хомӯш шуд")
+    else:
+        message = "Сабт шуд"
+    return _json({"ok": True, **sch, "message": message})
+
+
+def _period(q) -> str | None:
+    period = (q.get("period") or "").strip()
+    if period and not re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", period):
+        raise ValueError("моҳи корӣ нодуруст аст")
+    return period or None
 
 
 @_guard
 async def handle_attendance(request: web.Request) -> web.Response:
-    period = request.query.get("period", "")
-    if period and not re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", period):
-        return _err("Моҳи корӣ нодуруст аст")
-    return _json(db.get_attendance_report(period or None))
+    return _json(db.get_attendance_month(_period(request.query),
+                                         _int(request.query.get("user_id")) or None))
+
+
+@_guard
+async def handle_attendance_day(request: web.Request) -> web.Response:
+    return _json(db.get_attendance_day(_date(request.query.get("date"))))
+
+
+@_guard
+async def handle_attendance_stats(request: web.Request) -> web.Response:
+    q = request.query
+    return _json(db.get_attendance_stats(_date(q.get("date_from")), _date(q.get("date_to")),
+                                         _int(q.get("user_id")) or None))
+
+
+@_guard
+async def handle_attendance_set(request: web.Request) -> web.Response:
+    data = await _body(request)
+    day = _date(data.get("date"))
+    if not day:
+        return _err("Санаро интихоб кунед")
+    status = str(data.get("status", ""))
+    if day > cfg.today_str() and status != "leave":
+        return _err("Барои рӯзҳои оянда танҳо «рухсатӣ» гузоштан мумкин аст")
+    cell = db.admin_set_attendance(
+        _int(data.get("user_id")), day, status,
+        clock=data.get("time"), reason=data.get("reason"), eta=data.get("eta"))
+    return _json({"ok": True, "cell": cell, "message": "Сабт шуд"})
+
+
+@_guard
+async def handle_attendance_delete(request: web.Request) -> web.Response:
+    if not db.delete_attendance(_int(request.match_info["att_id"])):
+        return _err("Сабт ёфт нашуд", 404)
+    return _json({"ok": True, "message": "Сабт нест шуд"})
+
+
+@_guard
+async def handle_day_off(request: web.Request) -> web.Response:
+    data = await _body(request)
+    day = _date(data.get("date"))
+    if not day:
+        return _err("Санаро интихоб кунед")
+    off = bool(data.get("off"))
+    db.set_day_off(day, off, str(data.get("title") or ""))
+    return _json({"ok": True, "message": "Рӯзи истироҳат шуд" if off else "Рӯзи корӣ шуд"})
+
+
+# ── Кормандон ──────────────────────────────────────────────────────────
+
+@_guard
+async def handle_employees(request: web.Request) -> web.Response:
+    return _json(db.list_employees())
+
+
+@_guard
+async def handle_employee_update(request: web.Request) -> web.Response:
+    data = await _body(request)
+    uid = _int(request.match_info["user_id"])
+    if not db.get_employee(uid):
+        return _err("Корманд ёфт нашуд", 404)
+    alias = str(data["alias"]) if "alias" in data and data["alias"] is not None else None
+    active = bool(data["active"]) if "active" in data else None
+    db.update_employee(uid, alias=alias, active=active)
+    return _json({"ok": True, "employee": db.get_employee(uid), "message": "Сабт шуд"})
 
 
 @_guard
@@ -546,19 +689,16 @@ async def handle_requests_delete(request: web.Request) -> web.Response:
 
 @_guard
 async def handle_worker_delete(request: web.Request) -> web.Response:
-    await _body(request)
     backup = _make_backup("worker")
     result = db.delete_worker(_int(request.match_info["user_id"]))
     return _json({"ok": True, **result, "backup": backup,
-                  "message": f"Маълумоти корманд нест шуд ({result['requests']} дархост)"})
+                  "message": "Корманд ва ҳамаи маълумоташ нест шуд"})
 
 
 @_guard
 async def handle_wipe(request: web.Request) -> web.Response:
+    """Бе рамз ва бе калимаи тасдиқ — панел худаш як бор мепурсад; нусха ҳатмист."""
     data = await _body(request)
-    if str(data.get("confirm", "")).strip().upper() != "ТОЗА":
-        return _err("Барои тасдиқ калимаи ТОЗА-ро нависед")
-
     scope = "all" if data.get("scope") == "all" else "requests"
     before = _date(data.get("before"))
     backup = _make_backup("wipe")
@@ -566,7 +706,8 @@ async def handle_wipe(request: web.Request) -> web.Response:
         return _err("Нусхаи эҳтиётӣ сохта нашуд — тозакунӣ бекор шуд", 500)
     counts = db.wipe(scope, before)
     return _json({"ok": True, "counts": counts, "backup": backup,
-                  "message": f"База тоза шуд: {counts.get('requests', 0)} дархост нест шуд"})
+                  "message": f"Тоза шуд: {counts.get('requests', 0)} дархост, "
+                             f"{counts.get('attendance', 0)} сабти давомот"})
 
 
 @_guard
@@ -619,7 +760,7 @@ async def handle_export(request: web.Request) -> web.Response:
                      "Қарор кард", "Тасдиқи корманд", "Сана", "Мӯҳлат"])
     for r in rows:
         writer.writerow([
-            r["id"], r["name"], _TYPE_TG.get(r["type"], r["type"]), r["reason"],
+            r["id"], r.get("alias") or r["name"], _TYPE_TG.get(r["type"], r["type"]), r["reason"],
             r["minutes"] or "", _STATUS_TG.get(r["status"], r["status"]),
             r.get("decided_by") or "",
             {"yes": "Бале", "no": "Не"}.get(r.get("worker_confirmed") or "", ""),
@@ -637,11 +778,72 @@ async def handle_export(request: web.Request) -> web.Response:
     )
 
 
+_WD_SHORT = ["Дш", "Сш", "Чш", "Пш", "Ҷм", "Шб", "Яш"]
+_STATE_TG = {"on_time": "Сари вақт", "late": "Дер омад", "absent": "Наомад",
+             "leave": "Рухсатӣ", "pending": "Ҷавоб надод"}
+
+
+def _csv_response(buf: io.StringIO, name: str) -> web.Response:
+    return web.Response(
+        body=("﻿" + buf.getvalue()).encode("utf-8"),     # BOM — Excel кириллро дуруст мекушояд
+        headers={
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@_guard
+async def handle_attendance_export(request: web.Request) -> web.Response:
+    """Ҷадвали моҳи корӣ: сатр — корманд, сутун — рӯз; дар поён — рӯйхати муфассал."""
+    data = db.get_attendance_month(_period(request.query))
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n", delimiter=";")
+    days = data["days"]
+    w.writerow([f"Давомот: {data['period']['start']} — {data['period']['end']}",
+                f"Оғози кор: {data['schedule']['time'] or '—'}"])
+    w.writerow(["Корманд"] + [f"{d['date'][8:10]}.{d['date'][5:7]} {_WD_SHORT[d['wd']]}" for d in days]
+               + ["Омад", "Сари вақт", "Дер", "Наомад", "Рухсатӣ", "Ҷавоб надод",
+                  "Дерӣ (дақ.)", "Давомот %", "Миёнаи омадан"])
+    for emp in data["employees"]:
+        row = [emp["name"]]
+        for d in days:
+            cell = emp["cells"].get(d["date"])
+            if cell:
+                row.append({"on_time": cell["t"], "late": f"{cell['t']} (+{cell['late']})",
+                            "absent": "Н", "leave": "Р", "pending": "?"}.get(cell["s"], ""))
+            else:
+                row.append("—" if not d["workday"] else "")
+        s = emp["summary"]
+        row += [s["present"], s["on_time"], s["late"], s["absent"], s["leave"], s["pending"],
+                s["late_minutes"], "" if s["rate"] is None else s["rate"], s["avg_arrival"] or ""]
+        w.writerow(row)
+    w.writerow([])
+    w.writerow(["Шартҳо: 08:25 — сари вақт; 08:47 (+17) — дер (дақиқа); Н — наомад; "
+                "Р — рухсатӣ; ? — ҷавоб надод; — — рӯзи истироҳат"])
+    w.writerow([])
+    w.writerow(["Сана", "Корманд", "Ҳолат", "Вақти омадан", "Дер (дақ.)", "Сабаб", "Кай меояд", "Манбаъ"])
+    for emp in data["employees"]:
+        for day, cell in sorted(emp["cells"].items()):
+            w.writerow([day, emp["name"], _STATE_TG.get(cell["s"], cell["s"]), cell["t"],
+                        cell["late"] or "", cell["reason"], cell["eta"],
+                        {"bot": "бот", "admin": "админ", "request": "дархост"}.get(cell["src"], cell["src"])])
+    return _csv_response(buf, f"davomot-{data['period']['key']}.csv")
+
+
 async def handle_index(request: web.Request) -> web.Response:
+    """index.html бо рақами версия дар ?v= — браузер ҳеҷ гоҳ JS/CSS-и кӯҳнаро нигоҳ намедорад."""
     path = os.path.join(STATIC_DIR, "index.html")
-    if not os.path.isfile(path):
+    try:
+        stamp = max(int(os.path.getmtime(os.path.join(STATIC_DIR, f)))
+                    for f in ("index.html", "app.js", "style.css")
+                    if os.path.exists(os.path.join(STATIC_DIR, f)))
+        with open(path, encoding="utf-8") as fh:
+            html_text = fh.read().replace("__BUILD__", f"{cfg.BUILD}.{stamp}")
+    except (OSError, ValueError):
         return web.Response(text="admin_panel/index.html ёфт нашуд", status=500)
-    return web.FileResponse(path, headers={
+    return web.Response(text=html_text, content_type="text/html", headers={
         "Cache-Control": "no-store, must-revalidate",
         "X-Content-Type-Options": "nosniff",
     })
@@ -674,16 +876,29 @@ def build_app() -> web.Application:
 
     r.add_get("/api/health", handle_health)
     r.add_post("/api/login", handle_login)
+    r.add_post("/api/login/telegram", handle_login_telegram)
     r.add_get("/api/account", handle_account)
     r.add_post("/api/account", handle_account_update)
 
+    r.add_get("/api/overview", handle_overview)
     r.add_get("/api/dashboard", handle_dashboard)
     r.add_get("/api/analytics", handle_analytics)
+    r.add_get("/api/stats", handle_stats)
+    r.add_get("/api/export.csv", handle_export)
+
     r.add_get("/api/work-schedule", handle_work_schedule)
     r.add_post("/api/work-schedule", handle_work_schedule_update)
     r.add_get("/api/attendance", handle_attendance)
-    r.add_get("/api/stats", handle_stats)
-    r.add_get("/api/export.csv", handle_export)
+    r.add_get("/api/attendance/month", handle_attendance)
+    r.add_get("/api/attendance/day", handle_attendance_day)
+    r.add_get("/api/attendance/stats", handle_attendance_stats)
+    r.add_get("/api/attendance.csv", handle_attendance_export)
+    r.add_post("/api/attendance", handle_attendance_set)
+    r.add_delete("/api/attendance/{att_id:\\d+}", handle_attendance_delete)
+    r.add_post("/api/days-off", handle_day_off)
+
+    r.add_get("/api/employees", handle_employees)
+    r.add_post("/api/employees/{user_id:\\d+}", handle_employee_update)
 
     r.add_get("/api/requests", handle_requests)
     r.add_post("/api/requests/delete", handle_requests_delete)

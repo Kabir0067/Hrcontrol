@@ -2,7 +2,7 @@
 Description=SoftClub HR Control — watchdog every 2 minutes
 
 [Timer]
-OnBootSec=2min
+OnBootSec=90s
 OnUnitActiveSec=2min
 AccuracySec=15s
 Persistent=false

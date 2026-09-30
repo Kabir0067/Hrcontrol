@@ -24,6 +24,7 @@ from telebot.types import (
     Message,
     ReplyKeyboardMarkup,
     KeyboardButton,
+    LinkPreviewOptions,
     WebAppInfo,
 )
 
@@ -114,6 +115,26 @@ TYPE_LABELS = {k: (v["emoji"], v["third"]) for k, v in TYPES.items()}
 
 QUICK_MINUTES = [10, 15, 20, 30, 45, 60, 90, 120]
 QUICK_EXTRA_MINUTES = [5, 10, 15, 20, 30, 45]
+
+# Давомот: сабабҳо ва вақтҳои тайёр (корманд бояд ҳарчи камтар нависад)
+ATT_REASONS = [
+    "🚗 Дар роҳ ҳастам",
+    "🤒 Бемор ҳастам",
+    "🏥 Ба духтур рафтам",
+    "👨‍👩‍👧 Кори оилавӣ",
+    "📄 Кори шахсӣ",
+]
+ATT_ETA = [
+    ("30", "30 дақиқа баъд"),
+    ("60", "1 соат баъд"),
+    ("120", "2 соат баъд"),
+    ("noon", "Баъди нисфирӯзӣ"),
+    ("today", "Имрӯз намеоям"),
+    ("tomorrow", "Пагоҳ меоям"),
+]
+WEEKDAYS = ["душанбе", "сешанбе", "чоршанбе", "панҷшанбе", "ҷумъа", "шанбе", "якшанбе"]
+MONTHS_GEN = ["январ", "феврал", "март", "апрел", "май", "июн", "июл", "август",
+              "сентябр", "октябр", "ноябр", "декабр"]
 
 STATUS_WORD = {
     "pending": "⏳ Дар интизорӣ",
@@ -253,12 +274,47 @@ def _kb_cancel_only() -> InlineKeyboardMarkup:
     return kb
 
 
-def _kb_work_attendance(attendance_id: int) -> InlineKeyboardMarkup:
+# Префикси «att:» — ҷудо аз «w:» (ёдовариҳои дархост), вагарна ҷавоби давомот
+# ба handler-и нодуруст меафтод.
+
+def _kb_att_prompt(attendance_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(
-        InlineKeyboardButton("✅ Бале, омадам", callback_data=f"w:y:{attendance_id}"),
-        InlineKeyboardButton("📝 Не, наомадам", callback_data=f"w:n:{attendance_id}"),
+        InlineKeyboardButton("✅ Омадам", callback_data=f"att:y:{attendance_id}"),
+        InlineKeyboardButton("❌ Наомадам", callback_data=f"att:n:{attendance_id}"),
     )
+    return kb
+
+
+def _kb_att_reasons(attendance_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [InlineKeyboardButton(r, callback_data=f"atr:{i}") for i, r in enumerate(ATT_REASONS)]
+    for i in range(0, len(buttons), 2):
+        kb.row(*buttons[i:i + 2])
+    kb.row(InlineKeyboardButton("✍️ Сабаби дигар", callback_data="atr:x"))
+    kb.row(InlineKeyboardButton("‹ Бозгашт", callback_data=f"att:back:{attendance_id}"))
+    return kb
+
+
+def _kb_att_eta(attendance_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [InlineKeyboardButton(label, callback_data=f"ate:{key}") for key, label in ATT_ETA]
+    for i in range(0, len(buttons), 2):
+        kb.row(*buttons[i:i + 2])
+    kb.row(InlineKeyboardButton("✍️ Худам менависам", callback_data="ate:x"))
+    kb.row(InlineKeyboardButton("‹ Бозгашт", callback_data=f"att:back:{attendance_id}"))
+    return kb
+
+
+def _kb_att_back(attendance_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("‹ Бозгашт", callback_data=f"att:back:{attendance_id}"))
+    return kb
+
+
+def _kb_att_arrived(attendance_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("✅ Ман омадам", callback_data=f"att:arr:{attendance_id}"))
     return kb
 
 
@@ -282,9 +338,9 @@ def _kb_admin_after(req_id: int) -> InlineKeyboardMarkup:
 def _welcome(first_name: str) -> str:
     return (
         f"👋 Салом, <b>{_esc(first_name)}</b>!\n\n"
-        "Ман ёрдамчии <b>SoftClub</b> ҳастам. Ба воситаи ман роҳбариятро аз "
-        "вазъияти кориатон огоҳ мекунед — тез ва бе сӯҳбати зиёдатӣ.\n\n"
-        "Ҷавоби роҳбарият ҳамин ҷо меояд. 👇"
+        "Ин боти кории <b>SoftClub</b> аст. Агар дер монед, ба кор наоед ё "
+        "ҷавоб пурсед — ҳамин ҷо хабар диҳед, роҳбарият дарҳол мебинад.\n\n"
+        "Ҷавоби роҳбарият ҳам ҳамин ҷо меояд. 👇"
     )
 
 
@@ -364,27 +420,29 @@ def _worker_receipt(rec: dict) -> str:
 
 def _help_text() -> str:
     return (
-        "ℹ️ <b>Дастурамал</b>\n\n"
-        "<b>Чӣ тавр кор мекунад</b>\n"
-        "1. «📝 Дархости нав»-ро пахш кунед\n"
-        "2. Вазъиятро интихоб кунед\n"
-        "3. Сабабро аз рӯйхат интихоб кунед ё худатон нависед\n"
-        "4. Вақтро аз тугмаҳо интихоб кунед\n"
-        "5. «✅ Фиристодан»-ро пахш кунед\n\n"
-        "<b>Вазъиятҳо</b>\n"
-        "🕰 <b>Дер мекунам</b> — каме дертар ба кор меоям\n"
-        "🌿 <b>Намеоям</b> — имрӯз ба кор омада наметавонам\n"
-        "☕ <b>Ҷавоб мегирам</b> — дар корам, вале вақти кӯтоҳ лозим аст\n"
-        "🌅 <b>Барвақт меравам</b> — имрӯз барвақттар мерафтам\n\n"
-        "<b>Огоҳиномаҳо</b>\n"
-        f"• {cfg.REMINDER_LEAD} дақиқа пеш аз тамом шудани вақт ёдовар мешавам\n"
-        "• Агар «дер мекунам» бошед — дар вақти муайяншуда мепурсам, ки расидед ё не\n\n"
+        "ℹ️ <b>Бот чӣ кор мекунад</b>\n\n"
+        "<b>1. Давомот</b>\n"
+        "Ҳар рӯзи корӣ, вақте кор сар мешавад, бот мепурсад: «Ба кор омадед?»\n"
+        "• <b>✅ Омадам</b> — вақти омаданатон қайд мешавад\n"
+        "• <b>❌ Наомадам</b> — сабаб ва вақти омаданатонро менависед\n"
+        "Рӯзи якшанбе савол намеояд.\n\n"
+        "<b>2. Дархост ба роҳбарият</b>\n"
+        "«📝 Дархости нав»-ро пахш кунед ва вазъиятро интихоб кунед:\n"
+        "🕰 <b>Дер мекунам</b> — каме дертар меоям\n"
+        "🌿 <b>Имрӯз намеоям</b> — имрӯз омада наметавонам\n"
+        "☕ <b>Ҷавоб мегирам</b> — дар корам, вале бояд чанд вақт равам\n"
+        "🌅 <b>Барвақт меравам</b> — имрӯз барвақттар меравам\n\n"
+        "Сабабро аз тугмаҳо интихоб кунед ё худатон нависед. "
+        "Ҷавоби роҳбарият ҳамин ҷо меояд.\n\n"
+        "<b>Ёдовариҳо</b>\n"
+        f"• {cfg.REMINDER_LEAD} дақиқа пеш аз тамом шудани вақт хабар медиҳам\n"
+        "• Агар «Дер мекунам» фиристода бошед, дар вақти гуфтаатон мепурсам, ки расидед ё не\n\n"
         "<b>Фармонҳо</b>\n"
         "/start — оғоз\n"
         "/holat — дархостҳои ман\n"
         "/bekor — бекор кардани амали ҷорӣ\n"
-        "/help — ҳамин дастурамал\n\n"
-        "<i>Дархости фиристодашударо то ҷавоби роҳбарият бекор карда метавонед.</i>"
+        "/help — ҳамин дастур\n\n"
+        "<i>Дархостро то ҷавоби роҳбарият бекор карда метавонед.</i>"
     )
 
 
@@ -405,6 +463,99 @@ def _my_requests_text(rows: list[dict]) -> str:
         lines.append(f"    {STATUS_WORD.get(rec['status'], rec['status'])} · {_stamp(rec['created_at'])}")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+# ── Давомот ─────────────────────────────────────────────────────────────
+
+def _date_words(day: str | None = None) -> str:
+    """«30 сентябр, сешанбе»"""
+    d = cfg.parse_dt(day) if day else cfg.now()
+    d = d or cfg.now()
+    return f"{d.day} {MONTHS_GEN[d.month - 1]}, {WEEKDAYS[d.weekday()]}"
+
+
+def _late_note(rec: dict) -> str:
+    """«(17 дақ. дер)» ё холӣ — нисбат ба вақти оғози кор ва муҳлати иловагӣ."""
+    arrived, planned = cfg.parse_dt(rec.get("arrived_at")), cfg.parse_dt(rec.get("scheduled_at"))
+    if not arrived or not planned:
+        return ""
+    late = int((arrived - planned).total_seconds() // 60)
+    if late <= db.get_schedule()["grace"]:
+        return ""
+    return f" ({_human_minutes(late)} дер)"
+
+
+def _att_prompt_text(name: str, clock: str, reminder: bool = False) -> str:
+    first = _esc(_short_name(name).split()[0]) if name else ""
+    if reminder:
+        return (
+            "⏰ <b>Ёдоварӣ</b>\n\n"
+            f"{first}, шумо ҳанӯз ҷавоб надодаед.\n"
+            "<b>Имрӯз ба кор омадед?</b>"
+        )
+    return (
+        f"🌅 <b>Субҳ ба хайр, {first}!</b>\n\n"
+        f"Соати {clock} — вақти оғози кор.\n"
+        "<b>Шумо ба кор омадед?</b>"
+    )
+
+
+def _att_eta_text(key: str) -> str:
+    now = cfg.now()
+    if key.isdigit():
+        return f"тақрибан соати {(now + timedelta(minutes=int(key))).strftime('%H:%M')}"
+    return {
+        "noon": "баъди нисфирӯзӣ",
+        "today": "имрӯз намеояд",
+        "tomorrow": "пагоҳ меояд",
+    }.get(key, key)
+
+
+def _att_group_absent(rec: dict) -> str:
+    return (
+        f"🔴 <b>{_esc(_short_name(rec['name']))}</b> имрӯз ҳанӯз наомадааст\n"
+        f"📝 Сабаб: <i>{_esc(rec.get('reason') or '—')}</i>\n"
+        f"🕐 Кай меояд: <b>{_esc(rec.get('eta') or '—')}</b>"
+    )
+
+
+def daily_report_text(day: dict) -> str:
+    """Ҳисоботи давомоти рӯз барои гурӯҳи роҳбарият."""
+    groups: dict[str, list[dict]] = {k: [] for k in ("on_time", "late", "absent", "leave", "pending")}
+    for item in day["items"]:
+        cell = item.get("cell")
+        if cell and cell["s"] in groups:
+            groups[cell["s"]].append({**item, **cell})
+
+    def names(rows, fmt, limit=25):
+        out = [fmt(r) for r in rows[:limit]]
+        if len(rows) > limit:
+            out.append(f"   … ва боз {len(rows) - limit} нафар")
+        return out
+
+    s = day["summary"]
+    lines = [
+        f"📋 <b>Давомоти имрӯз</b> · {_date_words(day['date'])}",
+        f"Оғози кор: <b>{day['schedule']['time']}</b>",
+        "",
+        f"✅ Сари вақт омаданд: <b>{s['on_time']}</b>",
+    ]
+    if groups["late"]:
+        lines.append(f"⏰ Дер омаданд: <b>{len(groups['late'])}</b>")
+        lines += names(sorted(groups["late"], key=lambda r: -r["late"]), lambda r:
+                       f"   • {_esc(_short_name(r['name']))} — {r['t']} (+{_human_minutes(r['late'])})")
+    if groups["absent"]:
+        lines.append(f"🔴 Наомаданд: <b>{len(groups['absent'])}</b>")
+        lines += names(groups["absent"], lambda r:
+                       f"   • {_esc(_short_name(r['name']))} — {_esc(r['reason'] or 'сабаб нагуфт')}"
+                       + (f" · {_esc(r['eta'])}" if r["eta"] else ""))
+    if groups["leave"]:
+        lines.append(f"🌴 Дар рухсатӣ: <b>{len(groups['leave'])}</b>")
+        lines += names(groups["leave"], lambda r: f"   • {_esc(_short_name(r['name']))}")
+    if groups["pending"]:
+        lines.append(f"❔ Ҷавоб надоданд: <b>{len(groups['pending'])}</b>")
+        lines.append("   " + ", ".join(_esc(_short_name(r["name"])) for r in groups["pending"][:40]))
+    return "\n".join(lines)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -603,6 +754,21 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         if receipt is not None:
             db.update_worker_msg_id(req_id, receipt.message_id)
 
+        # «Намеоям / дер мекунам» → давомоти имрӯз худкор «наомад» бо ҳамин сабаб;
+        # саволи субҳ (агар фиристода шуда бошад) дигар лозим нест.
+        try:
+            att = db.attendance_from_request(user.id, req_type, reason, rec.get("deadline_at"))
+        except Exception as exc:
+            att = None
+            log.error("Давомот аз дархост #%d сабт нашуд: %s", req_id, exc)
+        if att and att.get("msg_id"):
+            await _safe(bot.edit_message_text(
+                "📝 <b>Қайд шуд.</b>\n\nСабаби шумо аз дархост гирифта шуд. "
+                "Вақте ба кор омадед, тугмаи поёнро пахш кунед.",
+                chat_id=user.id, message_id=att["msg_id"],
+                reply_markup=_kb_att_arrived(att["id"]),
+            ))
+
     # ── фармонҳо ────────────────────────────────────────────────────────
 
     @bot.message_handler(commands=["start"], func=_private)
@@ -630,13 +796,17 @@ def register_handlers(bot: AsyncTeleBot) -> None:
     async def cmd_admin(message: Message):
         db.clear_state(message.from_user.id)
         kb = InlineKeyboardMarkup(row_width=1)
-        kb.add(InlineKeyboardButton("📊 Кушодани админ-панел", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
+        kb.add(InlineKeyboardButton("📱 Кушодан дар Telegram", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
         kb.add(InlineKeyboardButton("🌐 Кушодан дар браузер", url=cfg.WEBAPP_URL))
         await _safe(bot.send_message(
             message.chat.id,
-            "🔐 <b>Панели маъмурият</b>\n\n"
-            "Омор, дархостҳо, кормандон ва графикҳо — ҳама дар як ҷо.",
+            "🔐 <b>Панели идоракунӣ</b>\n\n"
+            "Давомот, дархостҳо, кормандон ва омор — ҳама дар як ҷо.\n\n"
+            "📱 <b>Telegram</b> — панел ҳамин ҷо, дар дохили Telegram кушода мешавад.\n"
+            "🌐 <b>Браузер</b> — барои компютер ва планшет қулай аст.\n\n"
+            f"<i>Суроға: {_esc(cfg.WEBAPP_URL)}</i>",
             reply_markup=kb,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
         ))
 
     # ── тугмаҳо: интихоби вазъият ───────────────────────────────────────
@@ -943,50 +1113,157 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                 reply_markup=_kb_admin_after(req_id),
             ))
 
-    # ── ҳозиршавӣ аз рӯи вақти кори ҳаррӯза ──────────────────────────────
+    # ── давомот: «Ба кор омадед?» ────────────────────────────────────────
+    #   att:y:{id}    — омадам
+    #   att:n:{id}    — наомадам → сабаб → кай меояд
+    #   att:arr:{id}  — баъдтар омадам (пас аз «наомадам» ё дархост)
+    #   att:back:{id} — бозгашт ба саволи аввал
 
-    @bot.callback_query_handler(func=lambda c: c.data.startswith("w:"))
-    async def cb_work_attendance(call: CallbackQuery):
+    async def _att_record(call: CallbackQuery, attendance_id: int) -> dict | None:
+        rec = db.get_attendance(attendance_id)
+        if not rec or rec["user_id"] != call.from_user.id:
+            await _safe(bot.answer_callback_query(call.id, "Ин савол барои шумо нест"))
+            return None
+        if rec["work_date"] != cfg.today_str():
+            await _safe(bot.answer_callback_query(call.id, "Ин савол барои рӯзи дигар буд"))
+            await _safe(bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None))
+            return None
+        return rec
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("att:"))
+    async def cb_attendance(call: CallbackQuery):
         try:
-            _, answer, raw_id = call.data.split(":", 2)
+            _, action, raw_id = call.data.split(":", 2)
             attendance_id = int(raw_id)
         except (TypeError, ValueError):
-            await _safe(bot.answer_callback_query(call.id, "Маълумот нодуруст аст"))
+            await _safe(bot.answer_callback_query(call.id, "Хатогӣ. /start-ро пахш кунед"))
             return
-        record = db.get_attendance(attendance_id)
-        if not record or record["user_id"] != call.from_user.id:
-            await _safe(bot.answer_callback_query(call.id, "Ин савол барои шумо нест"))
+        rec = await _att_record(call, attendance_id)
+        if rec is None:
             return
-        if record["status"] != "pending":
-            await _safe(bot.answer_callback_query(call.id, "Ҷавоби шумо аллакай сабт шуд"))
-            return
+        chat_id, mid = call.message.chat.id, call.message.message_id
 
-        if answer == "y":
-            if not db.set_attendance_present(attendance_id):
-                await _safe(bot.answer_callback_query(call.id, "Ҷавоб аллакай сабт шудааст"))
+        if action == "back":
+            db.clear_state(call.from_user.id)
+            if rec["status"] != "pending":
+                await _safe(bot.answer_callback_query(call.id, "Ҷавоби шумо аллакай қайд шудааст"))
+                await _safe(bot.edit_message_reply_markup(chat_id=chat_id, message_id=mid, reply_markup=None))
                 return
-            clock = cfg.now().strftime("%H:%M")
-            await _safe(bot.answer_callback_query(call.id, "Омадани шумо сабт шуд"))
+            await _safe(bot.answer_callback_query(call.id))
             await _safe(bot.edit_message_text(
-                f"✅ <b>Омадани шумо сабт шуд.</b>\n\nСоати омадан: <b>{clock}</b>. Рӯзи кори хуб!",
-                chat_id=call.message.chat.id, message_id=call.message.message_id,
-            ))
-            await _safe(bot.send_message(
-                GROUP_ID,
-                f"✅ <b>{_esc(_short_name(record['name']))}</b> ба кор омад — <b>{clock}</b> имрӯз.",
-            ))
+                _att_prompt_text(rec["name"], _clock(rec["scheduled_at"])),
+                chat_id=chat_id, message_id=mid, reply_markup=_kb_att_prompt(attendance_id)))
             return
 
-        if answer != "n":
-            await _safe(bot.answer_callback_query(call.id, "Интихоб нодуруст аст"))
+        if action in ("y", "arr"):
+            was_absent = rec["status"] == "absent"
+            if rec["status"] == "present":
+                await _safe(bot.answer_callback_query(call.id, "Омадани шумо аллакай қайд шудааст"))
+                await _safe(bot.edit_message_reply_markup(chat_id=chat_id, message_id=mid, reply_markup=None))
+                return
+            if rec["status"] == "leave" or not db.set_attendance_present(attendance_id):
+                await _safe(bot.answer_callback_query(call.id, "Ҷавоби шумо аллакай қайд шудааст"))
+                return
+            db.clear_state(call.from_user.id)
+            rec = db.get_attendance(attendance_id) or rec
+            clock = _clock(rec["arrived_at"])
+            late = _late_note(rec)
+            await _safe(bot.answer_callback_query(call.id, "✅ Қайд шуд"))
+            await _safe(bot.edit_message_text(
+                f"✅ <b>Қайд шуд.</b> Шумо соати <b>{clock}</b> ба кор омадед{late}.\n\nРӯзи хуб! ☀️",
+                chat_id=chat_id, message_id=mid))
+            if was_absent:
+                await _safe(bot.send_message(
+                    GROUP_ID,
+                    f"🟢 <b>{_esc(_short_name(rec['name']))}</b> ба кор омад — <b>{clock}</b>{late}"))
             return
-        db.set_state(call.from_user.id, {"step": "work_absence_reason", "attendance_id": attendance_id})
+
+        if action == "n":
+            if rec["status"] != "pending":
+                await _safe(bot.answer_callback_query(call.id, "Ҷавоби шумо аллакай қайд шудааст"))
+                return
+            db.set_state(call.from_user.id, {"step": "att_reason", "attendance_id": attendance_id})
+            await _safe(bot.answer_callback_query(call.id))
+            await _safe(bot.edit_message_text(
+                "📝 <b>Сабаби наомаданатон чист?</b>\n\nАз тугмаҳо интихоб кунед ё худатон нависед:",
+                chat_id=chat_id, message_id=mid, reply_markup=_kb_att_reasons(attendance_id)))
+            return
+
         await _safe(bot.answer_callback_query(call.id))
-        await _safe(bot.edit_message_text(
-            "📝 <b>Фаҳмо.</b> Лутфан сабаби наомаданатонро нависед:",
-            chat_id=call.message.chat.id, message_id=call.message.message_id,
-            reply_markup=_kb_cancel_only(),
-        ))
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("atr:"))
+    async def cb_att_reason(call: CallbackQuery):
+        state = db.get_state(call.from_user.id)
+        if not state or state.get("step") not in ("att_reason", "att_reason_text"):
+            await _safe(bot.answer_callback_query(call.id, "Ин савол дигар фаъол нест"))
+            return
+        choice = call.data.split(":", 1)[1]
+        await _safe(bot.answer_callback_query(call.id))
+        if choice == "x":
+            state["step"] = "att_reason_text"
+            db.set_state(call.from_user.id, state)
+            await _safe(bot.edit_message_text(
+                "✍️ <b>Сабабро кӯтоҳ нависед:</b>",
+                chat_id=call.message.chat.id, message_id=call.message.message_id,
+                reply_markup=_kb_att_back(state["attendance_id"])))
+            return
+        try:
+            reason = ATT_REASONS[int(choice)].split(" ", 1)[1]
+        except (ValueError, IndexError):
+            return
+        state.update(step="att_eta", reason=reason)
+        db.set_state(call.from_user.id, state)
+        await _ask_att_eta(call.message.chat.id, state, call.message.message_id)
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("ate:"))
+    async def cb_att_eta(call: CallbackQuery):
+        state = db.get_state(call.from_user.id)
+        if not state or state.get("step") not in ("att_eta", "att_eta_text"):
+            await _safe(bot.answer_callback_query(call.id, "Ин савол дигар фаъол нест"))
+            return
+        choice = call.data.split(":", 1)[1]
+        await _safe(bot.answer_callback_query(call.id))
+        if choice == "x":
+            state["step"] = "att_eta_text"
+            db.set_state(call.from_user.id, state)
+            await _safe(bot.edit_message_text(
+                "✍️ <b>Кай меоед?</b>\n<i>Масалан: соати 10:30, баъди дарс, пагоҳ</i>",
+                chat_id=call.message.chat.id, message_id=call.message.message_id,
+                reply_markup=_kb_att_back(state["attendance_id"])))
+            return
+        await _safe(bot.edit_message_reply_markup(
+            chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None))
+        await _finish_att_absence(call.message.chat.id, call.from_user.id, state, _att_eta_text(choice))
+
+    async def _ask_att_eta(chat_id: int, state: dict, message_id: int | None = None) -> None:
+        text = (f"📝 Сабаб: <i>{_esc(state['reason'])}</i>\n\n"
+                "🕐 <b>Кай ба кор меоед?</b>")
+        kb = _kb_att_eta(state["attendance_id"])
+        if message_id:
+            edited = await _safe(bot.edit_message_text(
+                text, chat_id=chat_id, message_id=message_id, reply_markup=kb))
+            if edited is not None:
+                return
+        await _safe(bot.send_message(chat_id, text, reply_markup=kb))
+
+    async def _finish_att_absence(chat_id: int, user_id: int, state: dict, eta: str) -> None:
+        db.clear_state(user_id)
+        attendance_id = int(state.get("attendance_id", 0))
+        rec = db.get_attendance(attendance_id)
+        if (not rec or rec["user_id"] != user_id or rec["work_date"] != cfg.today_str()
+                or not db.set_attendance_absent(attendance_id, state.get("reason", "—"), eta)):
+            await _safe(bot.send_message(chat_id, "ℹ️ Ин савол дигар фаъол нест."))
+            return
+        rec = db.get_attendance(attendance_id) or rec
+        await _safe(bot.send_message(
+            chat_id,
+            "🙏 <b>Ташаккур, ки хабар додед.</b> Роҳбарият огоҳ шуд.\n\n"
+            f"📝 Сабаб: <i>{_esc(rec['reason'])}</i>\n"
+            f"🕐 Кай меоед: <b>{_esc(rec['eta'])}</b>\n\n"
+            "Вақте ба кор омадед, тугмаи поёнро пахш кунед 👇",
+            reply_markup=_kb_att_arrived(attendance_id)))
+        await _safe(bot.send_message(GROUP_ID, _att_group_absent(rec)))
 
     # ── санҷиши омадан аз дархости «дер мекунам» ─────────────────────────
 
@@ -1024,6 +1301,10 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                 await _safe(bot.answer_callback_query(call.id, "Шумо аллакай ҷавоб додед"))
                 return
             db.update_worker_confirmation(check["request_id"], "yes")
+            try:                                  # давомоти имрӯз: «омад» бо вақти воқеӣ
+                db.attendance_mark_arrived(call.from_user.id)
+            except Exception as exc:
+                log.error("Давомот (arrival #%d): %s", check_id, exc)
             await _safe(bot.answer_callback_query(call.id, "✅ Хуш омадед!"))
             await _safe(bot.edit_message_text(
                 f"🎉 <b>Хуш омадед!</b>\n\n"
@@ -1140,43 +1421,18 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             await _finish_arrival_delay(bot, message.chat.id, message.from_user, state, minutes)
             return
 
-        if step == "work_absence_reason":
-            if not text:
-                await _safe(bot.send_message(message.chat.id, "Лутфан сабаби наомаданро нависед."))
-                return
-            state["reason"] = text[:1000]
-            state["step"] = "work_absence_eta"
-            db.set_state(uid, state)
-            await _safe(bot.send_message(
-                message.chat.id,
-                "🕐 <b>Кай ба кор меоед?</b>\nМасалан: <i>соати 10:30</i>, <i>пагоҳ</i> ё <i>имрӯз намеоям</i>.",
-                reply_markup=_kb_cancel_only(),
-            ))
+        # Давомот: сабабро метавон ҳам бо тугма, ҳам бо матн гуфт
+        if step in ("att_reason", "att_reason_text", "att_eta", "att_eta_text") and not text:
             return
 
-        if step == "work_absence_eta":
-            if not text:
-                await _safe(bot.send_message(message.chat.id, "Вақти тахминии омаданро нависед."))
-                return
-            attendance_id = int(state.get("attendance_id", 0))
-            record = db.get_attendance(attendance_id)
-            if not record or record["user_id"] != uid or not db.set_attendance_absent(
-                attendance_id, state.get("reason", ""), text
-            ):
-                db.clear_state(uid)
-                await _safe(bot.send_message(message.chat.id, "Ин савол дигар фаъол нест."))
-                return
-            db.clear_state(uid)
-            await _safe(bot.send_message(
-                message.chat.id,
-                "✅ Сабаб ва вақти тахминии шумо сабт шуд. Ташаккур барои хабар додан.",
-            ))
-            await _safe(bot.send_message(
-                GROUP_ID,
-                f"📝 <b>{_esc(_short_name(record['name']))}</b> имрӯз наомад.\n"
-                f"Сабаб: <i>{_esc(state.get('reason', '—'))}</i>\n"
-                f"Меояд: <b>{_esc(text[:300])}</b>",
-            ))
+        if step in ("att_reason", "att_reason_text"):
+            state.update(step="att_eta", reason=text[:1000])
+            db.set_state(uid, state)
+            await _ask_att_eta(message.chat.id, state)
+            return
+
+        if step in ("att_eta", "att_eta_text"):
+            await _finish_att_absence(message.chat.id, uid, state, text[:300])
             return
 
         if step in ("reason", "minutes", "confirm", "arrival_minutes"):
@@ -1365,23 +1621,65 @@ async def process_arrival_checks(bot: AsyncTeleBot) -> None:
 async def process_work_attendance(bot: AsyncTeleBot) -> None:
     """Мувофиқи вақти кори аз панел гузошташуда аз ҳар корманд мепурсад.
 
-    SQLite пеш аз фиристодан сабт месозад, бинобар ин restart-и бот ё коркарди
-    такрорӣ ягон огоҳии дуюм намефиристад. Якшанбе дар database санҷида мешавад.
+    Сабт пеш аз фиристодан сохта мешавад (UNIQUE дар база), бинобар ин restart-и
+    бот ё коркарди такрорӣ саволи дуюм намефиристад. Якшанбе ва идҳо — не.
     """
     for record in db.create_due_attendance():
+        # Аввал қайд мекунем, баъд мефиристем: агар бот ҳамин лаҳза афтад,
+        # корманд ду бор савол намегирад (беҳтар як бор кам, то ду бор зиёд).
+        if not db.mark_attendance_prompted(record["id"]):
+            continue
         sent = await _safe(bot.send_message(
             record["user_id"],
-            "🔔 <b>Вақти корӣ расид.</b>\n\nШумо имрӯз ба кор омадед? "
-            "Лутфан ҷавоб диҳед, то ҳозиршавӣ сабт шавад.",
-            reply_markup=_kb_work_attendance(record["id"]),
+            _att_prompt_text(record["name"], _clock(record["scheduled_at"])),
+            reply_markup=_kb_att_prompt(record["id"]),
         ))
-        # Ҳатто агар корбар ботро баста бошад, як бор кӯшиш кифоя аст: гурӯҳро
-        # спам намекунем ва дар ҷадвал ҳолати «дар интизорӣ» мемонад.
-        db.mark_attendance_prompted(record["id"])
         if sent is None:
-            log.warning("Ҳозиршавӣ ба %s фиристода нашуд", record["user_id"])
-        else:
-            log.info("Огоҳии ҳозиршавӣ #%d → %s", record["id"], record["name"])
+            log.warning("📋 Саволи давомот ба %s нарасид (шояд ботро бастааст)", record["name"])
+            continue
+        db.set_attendance_msg(record["id"], sent.message_id)
+        log.info("📋 Саволи давомот #%d → %s", record["id"], record["name"])
+
+
+async def remind_attendance(bot: AsyncTeleBot) -> None:
+    """Як ёдоварӣ ба онҳое, ки ба саволи субҳ ҷавоб надоданд."""
+    for record in db.get_attendance_to_remind():
+        db.mark_attendance_reminded(record["id"])
+        await _safe(bot.send_message(
+            record["user_id"],
+            _att_prompt_text(record["name"], _clock(record["scheduled_at"]), reminder=True),
+            reply_markup=_kb_att_prompt(record["id"]),
+        ))
+
+
+async def send_daily_report(bot: AsyncTeleBot) -> None:
+    """Ҳисоботи давомоти рӯз — як бор ба гурӯҳи роҳбарият."""
+    day = db.daily_report_due()
+    if not day:
+        return
+    db.set_settings({"daily_report_sent": day})
+    data = db.get_attendance_day(day)
+    if not data["items"]:
+        return
+    await _safe(bot.send_message(GROUP_ID, daily_report_text(data)))
+    log.info("📋 Ҳисоботи давомоти %s ба гурӯҳ фиристода шуд", day)
+
+
+async def daily_backup(bot: AsyncTeleBot) -> None:
+    """Нусхаи ҳаррӯзаи база (дар оғоз ва пас аз нисфи шаб) + ихтиёрӣ ба Telegram."""
+    today = cfg.today_str()
+    if db.get_setting("daily_backup") == today:
+        return
+    db.set_settings({"daily_backup": today})
+    path = db.make_backup("daily")
+    if path and cfg.BACKUP_CHAT_ID:
+        try:
+            with open(path, "rb") as fh:
+                await bot.send_document(
+                    cfg.BACKUP_CHAT_ID, fh,
+                    caption=f"💾 Нусхаи база · {today}", disable_notification=True)
+        except Exception as exc:
+            log.warning("💾 Нусха ба Telegram нарафт: %s", exc)
 
 
 async def housekeeping() -> None:

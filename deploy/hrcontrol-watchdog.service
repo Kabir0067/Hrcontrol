@@ -1,5 +1,5 @@
 [Unit]
-Description=SoftClub HR Control — watchdog (restart / enable / nginx link)
+Description=SoftClub HR Control — watchdog (self-healing: code, db, secrets, service, nginx)
 After=network-online.target
 
 [Service]

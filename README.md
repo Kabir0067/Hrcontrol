@@ -1,9 +1,38 @@
 # SoftClub HR Control
 
-Боти Telegram барои огоҳ кардани роҳбарият аз вазъияти кории ҳамкорон
-(дер мондан, наомадан, ҷавоб пурсидан, барвақт рафтан) + панели веби маъмурият.
+Боти Telegram ва панели веб барои **давомоти кормандон** ва дархостҳо ба роҳбарият
+(дер мемонам, намеоям, ҷавоб мепурсам, барвақт меравам).
 
-**Продакшн:** https://test.softclub.tj/hrcontrol/ · бот `@SoftClubHrControlBot`
+**Продакшн:** https://test.softclub.tj/hrcontrol/ · бот `@SoftClubHrControlBot` · фармони `/admin`
+
+---
+
+## Имкониятҳо
+
+### Бот
+- **Давомот.** Ҳар рӯзи корӣ дар вақти муқарраршуда бот аз ҳар корманд мепурсад: «Ба кор омадед?»
+  - **✅ Омадам** — вақти омадан сабт мешавад (сари вақт ё чанд дақиқа дер);
+  - **❌ Наомадам** — сабаб (тугма ё матн) → кай меояд (тугма ё матн) → роҳбарият дар гурӯҳ огоҳ мешавад;
+    баъдтар тугмаи **«Ман омадам»** вақти воқеии омаданро сабт мекунад;
+  - агар 30 дақиқа ҷавоб надиҳад — як ёдоварӣ;
+  - як соат пас аз оғози кор — **ҳисоботи рӯз** ба гурӯҳи роҳбарият (кӣ дер кард, кӣ наомад, кӣ ҷавоб надод);
+  - якшанбе ва рӯзҳои истироҳат (идҳо) савол намеравад;
+  - касе, ки субҳ «Имрӯз намеоям / Дер мекунам» фиристодааст, савол намегирад — сабаб аз дархост гирифта мешавад.
+- **Дархостҳо** ба гурӯҳи роҳбарият бо тугмаҳои «Иҷозат / Рад», ёдовариҳо ва санҷиши «расидед?».
+
+### Панели веб (Telegram Mini App + браузер; телефон, планшет, компютер; мавзӯи равшан/торик)
+| Бахш | Чӣ ҳаст |
+|---|---|
+| **Асосӣ** | Давомоти имрӯз (ҳалқа), кӣ ҳанӯз дар кор нест ва чаро, дархостҳои интизор бо «Иҷозат / Рад», графикҳои 7 рӯз |
+| **Давомот** | Вақти корӣ (муқаррар / иваз / хомӯш), **рӯз** (рӯйхат бо филтр) ва **моҳи корӣ 5 → 4** (ҷадвали корманд × рӯз), ислоҳи дастӣ (омад / наомад / рухсатӣ), рӯзи ид, Excel (CSV) |
+| **Дархостҳо** | Ҷустуҷӯ, филтрҳо (давра, навъ, ҳолат, корманд), нест кардан **бо як пахш** ва «Бозгардондан» (5 сония), интихоби якчанд, CSV |
+| **Кормандон** | Рӯйхат, профил бо тақвими моҳ, иваз кардани ном, хомӯш кардани савол (масалан, барои роҳбарон), нест кардан |
+| **Омор** | Давомот: %, сари вақт, миёнаи омадан, дерӣ, вақти омадан, рӯзҳои ҳафта, рейтинг (тартиб бо пахши сутун). Дархостҳо: навъҳо, қарорҳо, сабабҳо, соатҳо, кормандон |
+| **Танзимот** | Вақти корӣ, логин + рамз (танҳо логини нав ва рамзи нав × 2), нусхаи база, CSV, тозакунӣ |
+
+- Админҳои гурӯҳи роҳбарият дар дохили Telegram **бе рамз** ворид мешаванд (initData + `getChatMember`).
+- Нест кардан рамз намепурсад; пеш аз ҳар нест кардани оммавӣ нусхаи эҳтиётӣ худкор сохта мешавад.
+- Моҳи корӣ аз **5-ум то 4-уми** моҳи дигар ҳисоб мешавад (ҳам дар ҷадвал, ҳам дар омор).
 
 ---
 
@@ -12,108 +41,77 @@
 | Файл | Вазифа |
 |---|---|
 | `config.py` | Ҳамаи танзимот (аз `.env` ё муҳити система). Вақт — ҳамеша `Asia/Dushanbe` |
-| `database.py` | SQLite: дархостҳо, санҷиши омадан, ҳолати корбар, кормандон, омор |
-| `handlers.py` | Мантиқи бот: равандҳо, тугмаҳо, ёдовариҳо |
+| `database.py` | SQLite: дархостҳо, давомот, кормандон, рӯзҳои истироҳат, омор, нусхаҳо |
+| `handlers.py` | Бот: равандҳо, тугмаҳо, саволи давомот, ёдовариҳо, ҳисоботи рӯз |
 | `admin_server.py` | aiohttp API + статикаи панел |
 | `main.py` | Оғоз, назорати зерсистемаҳо, log |
-| `deploy/` | systemd watchdog (`hrcontrol-watchdog.*`) ва `install.sh` |
-| `tests/` | Санҷишҳои офлайн: `python tests/test_resilience.py`, `python tests/test_admin_api.py` |
 | `admin_panel/` | Панели веб (HTML/CSS/JS, **бе ягон китобхонаи беруна**) |
-
----
-
-## Оғоз дар компютер
+| `deploy/` | systemd, watchdog, nginx, `deploy.sh` |
+| `tests/` | `test_resilience.py`, `test_attendance.py`, `test_admin_api.py` (бе Telegram, бо базаи муваққатӣ) |
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env        # BOT_TOKEN ва ғайраро гузоред
-.venv/bin/python main.py
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+for t in test_resilience test_attendance test_admin_api; do .venv/bin/python tests/$t.py; done
+.venv/bin/python tests/test_admin_api.py --serve     # панел бо маълумоти намунавӣ: http://127.0.0.1:18901/__dev_login
 ```
 
-Панел: http://127.0.0.1:8901/
+> ⚠️ Ботро бо **ҳамон** `BOT_TOKEN`-и продакшн дар компютер оғоз накунед — Telegram ду нусхаро
+> ҳамзамон иҷозат намедиҳад (409 Conflict) ва боти сервер «худ аз худ» кор намекунад.
+> Ин ҳолат дар log ва дар «Танзимот → Система» нишон дода мешавад.
 
 ---
 
 ## Продакшн (сервери 157.180.29.248)
 
-- **Роҳ:** `/home/kabir0067/Hrcontrol/`
-- **Git:** https://github.com/Kabir0067/Hrcontrol (private)
-- **Сервис:** `hrcontrol.service` (`enabled` — пас аз reboot худаш меояд;
-  `Restart=always` — пас аз ҳар афтиш дар 5 сония бармегардад)
-- **Watchdog:** `hrcontrol-watchdog.timer` — ҳар 2 дақиқа (скрипт: `deploy/hrcontrol-watchdog.sh`):
-  - хидмат `disabled` шавад → `enable`; истода бошад → `start`;
-  - `/api/health?strict=1` ду бор пай дар пай хато (polling-и Telegram овезон) → `restart`;
-  - пайванди `sites-enabled/hrcontrol`-и nginx нест шавад → барқарор + `reload`
-    (танҳо агар `nginx -t` гузарад).
-- **Порт:** `127.0.0.1:8901` (танҳо дохилӣ; аз берун — тавассути nginx)
-- **nginx:** `/etc/nginx/sites-available/hrcontrol` → `test.softclub.tj`
-- **База:** `softclub.db` — **ҳеҷ гоҳ рӯйнавис накунед**
-- **Сирҳо:** танҳо дар `.env` (`BOT_TOKEN`, `ADMIN_PASS`, `SECRET_KEY`) — ба git намеравад.
+Лоиҳа ба папкаи хонаи ягон корбар вобаста **нест** (сервер муштарак аст):
 
-### Деплойи нав
+| Роҳ | Чӣ | Соҳиб |
+|---|---|---|
+| `/opt/hrcontrol` | код (git) + `.venv` | root (барои хидмат — танҳо хондан) |
+| `/var/lib/hrcontrol` | `softclub.db`, `backups/`, `bot.log` | `hrcontrol` (корбари системавӣ) |
+| `/etc/hrcontrol/hrcontrol.env` | сирҳо: `BOT_TOKEN`, `ADMIN_PASS`, `SECRET_KEY` | root:hrcontrol 640 |
+| `/var/backups/hrcontrol` | **сейф**: `repo.git`, нусхаҳои база (14 рӯз), нусхаи env | root |
 
-```bash
-# 1. Нусхаи эҳтиётӣ
-ssh kabir0067@157.180.29.248 'cd ~/Hrcontrol && B=backup_$(date +%Y%m%d_%H%M%S) \
-  && mkdir -p $B && cp -r *.py softclub.db admin_panel hrcontrol.service $B/'
+- **Хидмат** `hrcontrol.service`: `enabled` (пас аз reboot худаш меояд), `Restart=always`,
+  корбари ҷудо, `ProtectSystem=strict`, `MemoryMax=512M`.
+- **Watchdog** `hrcontrol-watchdog.timer` (ҳар 2 дақиқа, 90 сония пас аз boot) — ҳар чизи нестшударо барқарор мекунад:
+  код (аз `repo.git`), venv, сирҳо, файлҳои systemd, база (аз навтарин нусха), хидмат (enable/start,
+  health-check → restart), nginx (enable/start, конфиг, пайванд).
+- Худи бот ҳам ҳангоми оғоз, агар база нест бошад, онро аз нусха барқарор мекунад.
+- Нусхаи ҳаррӯзаи база худкор; ихтиёрӣ — ба чати Telegram (`BACKUP_CHAT_ID`).
 
-# 2. Файлҳо (БЕ softclub.db ва .env!)
-scp config.py database.py handlers.py admin_server.py main.py hrcontrol.service \
-    kabir0067@157.180.29.248:~/Hrcontrol/
-scp -r admin_panel deploy kabir0067@157.180.29.248:~/Hrcontrol/
-
-# 3. Санҷиш, насби systemd (хидмат + watchdog) ва restart
-ssh kabir0067@157.180.29.248 'cd ~/Hrcontrol \
-  && .venv/bin/python3 -m py_compile *.py \
-  && sudo bash deploy/install.sh \
-  && sleep 8 && curl -s "localhost:8901/api/health?strict=1"'
-```
-
-Ҳангоми тағйири `admin_panel/` рақами `?v=` -ро дар `index.html` як зина боло баред,
-вагарна браузери телефон нусхаи кӯҳнаро нишон медиҳад.
-
-### Таъмир (то watchdog ботро «зинда» накунад)
+### Деплой (аз git)
 
 ```bash
-touch ~/Hrcontrol/.maintenance && sudo systemctl stop hrcontrol   # оғози таъмир
-rm ~/Hrcontrol/.maintenance && sudo systemctl start hrcontrol     # анҷом
+# Аз компютер: bundle-и ҳамон commit-е, ки дар GitHub аст
+git bundle create hr.bundle main
+scp hr.bundle kabir0067@157.180.29.248:/tmp/
+ssh kabir0067@157.180.29.248 'sudo hrcontrol-deploy /tmp/hr.bundle'
+
+# Ё мустақиман аз GitHub (агар deploy key-и /etc/hrcontrol/deploy_key.pub ба репо илова шуда бошад):
+ssh kabir0067@157.180.29.248 'sudo hrcontrol-deploy'
 ```
+
+`hrcontrol-deploy`: git → код → venv (агар `requirements.txt` иваз шуда бошад) → **ҳамаи санҷишҳо** →
+нусхаи база → systemd/nginx → restart → health-check. Агар санҷиш ё оғоз хато шавад — **версияи қаблӣ
+худкор бармегардад**.
 
 ### Фармонҳои фоиданок
 
 ```bash
-systemctl status hrcontrol                    # вазъият
-journalctl -u hrcontrol -f                    # log-и зинда
-grep hrcontrol-watchdog /var/log/syslog | tail   # амалҳои watchdog (ё: journalctl -u hrcontrol-watchdog)
-tail -f ~/Hrcontrol/bot.log                   # log-и барнома (ротация: 5 МБ × 3)
-curl -s localhost:8901/api/health             # санҷиши тандурустӣ (база)
-curl -s "localhost:8901/api/health?strict=1"  # + polling-и Telegram зинда аст?
+systemctl status hrcontrol                        # вазъият
+journalctl -u hrcontrol -f                        # log-и зинда
+journalctl -t hrcontrol-watchdog -t hrcontrol-deploy --since today   # амалҳои watchdog ва деплой
+curl -s "localhost:8901/api/health?strict=1"      # саломатӣ (база + polling-и Telegram)
+sudo touch /etc/hrcontrol/maintenance             # таъмир: watchdog дахолат намекунад
+sudo rm /etc/hrcontrol/maintenance                # анҷоми таъмир
 ```
 
----
-
-## Панели маъмурият (v3.2)
-
-Аввал барои телефон сохта шудааст (Telegram Mini App); дар компютер — менюи паҳлӯ.
-
-| Бахш | Имкониятҳо |
-|---|---|
-| **Асосӣ** | Имрӯз / интизори қарор / ҳафта / моҳ; дархостҳои интизор бо тугмаҳои «Иҷозат / Рад»; графики 7 рӯз |
-| **Дархостҳо** | Ҷустуҷӯ; филтр аз рӯи навъ, вазъият, давра (имрӯз, 7/30 рӯз, моҳ, санаҳо), корманд; тартиб; CSV бо ҳамон филтрҳо; интихоб ва нест кардани якчанд; нест кардани ҳамаи ёфтшудаҳо |
-| **Кормандон** | Рейтинг бо давра ва тартиб (бештар дер, дақиқаҳои дерӣ, …); тафсилот: сабабҳо, навъҳо, рӯзҳои ҳафта, ҳамаи дархостҳо, нест кардани маълумоти корманд |
-| **Омор** | Хулосаҳои худкор, % иҷозат, вақти миёнаи ҷавоб, соатҳои дерӣ, навъҳо, қарорҳо, динамика, сабабҳои асосӣ, рӯзҳо ва соатҳо, рейтинг, кӣ қарор кард |
-| **Танзимот** | Иваз кардани логин ва рамз (PBKDF2, сессияҳои кӯҳна беэътибор мешаванд); боргирии нусхаи база; CSV; тозакунии база (кӯҳнаҳо / ҳамаи дархостҳо / пурра) |
-
-Ҳар нест кардан (ба ғайр аз як дархост) пеш аз иҷро **нусхаи эҳтиётии худкор** месозад:
-`~/Hrcontrol/backups/` (30-тои охирин). Амалҳои хатарнок рамзро аз нав талаб мекунанд.
-
-Логин/рамзе, ки аз панел иваз шудааст, дар база (`settings`) нигоҳ дошта мешавад ва аз
-`.env` афзалият дорад. Агар рамз фаромӯш шавад:
+Агар рамзи панел фаромӯш шавад:
 
 ```bash
-cd ~/Hrcontrol && .venv/bin/python3 -c "import sqlite3; c=sqlite3.connect('softclub.db'); c.execute(\"DELETE FROM settings WHERE key IN ('admin_login','admin_pass_hash')\"); c.commit()"
-# Акнун боз ADMIN_LOGIN / ADMIN_PASS аз .env кор мекунанд (restart лозим нест)
+sudo -u hrcontrol /opt/hrcontrol/.venv/bin/python3 -c "import sqlite3; c=sqlite3.connect('/var/lib/hrcontrol/softclub.db'); c.execute(\"DELETE FROM settings WHERE key IN ('admin_login','admin_pass_hash')\"); c.commit()"
+# Акнун боз ADMIN_LOGIN / ADMIN_PASS аз /etc/hrcontrol/hrcontrol.env кор мекунанд
 ```
 
 ---
@@ -123,55 +121,34 @@ cd ~/Hrcontrol && .venv/bin/python3 -c "import sqlite3; c=sqlite3.connect('softc
 | Метод | Роҳ | Авторизатсия |
 |---|---|---|
 | GET | `/api/health` (`?strict=1` — бо санҷиши polling) | не |
-| POST | `/api/login` | не (маҳдудкунӣ: 8 кӯшиш / 5 дақ) |
-| GET / POST | `/api/account` — логин/рамз (`current_password`, `new_login`, `new_password`) | Bearer |
-| GET | `/api/dashboard` | Bearer |
-| GET | `/api/analytics?date_from&date_to` | Bearer |
+| POST | `/api/login`, `/api/login/telegram` (`{init_data}`) | не (маҳдуд: 8 кӯшиш / 5 дақ) |
+| GET / POST | `/api/account` — `{new_login, new_password, new_password_confirm}` | Bearer |
+| GET | `/api/overview`, `/api/dashboard`, `/api/analytics?date_from&date_to` | Bearer |
+| GET / POST | `/api/work-schedule` — `{time, days, grace, report}` | Bearer |
+| GET | `/api/attendance/day?date`, `/api/attendance/month?period=YYYY-MM&user_id`, `/api/attendance/stats` | Bearer |
+| POST / DELETE | `/api/attendance` — `{user_id, date, status: present\|absent\|leave, time, reason, eta}`, `/api/attendance/{id}` | Bearer |
+| POST | `/api/days-off` — `{date, off, title}` | Bearer |
+| GET / POST | `/api/employees`, `/api/employees/{id}` — `{alias, active}` | Bearer |
 | GET | `/api/requests?type&status&date_from&date_to&q&user_id&sort&limit&offset` | Bearer |
 | GET / DELETE | `/api/requests/{id}` | Bearer |
-| POST | `/api/requests/delete` — `{ids}` ё `{filters, password}` | Bearer (+ рамз) |
-| POST | `/api/requests/{id}/decision`, `/api/requests/{id}/message` | Bearer |
-| GET | `/api/workers?date_from&date_to`, `/api/workers/{user_id}` | Bearer |
-| POST | `/api/workers/{user_id}/delete` — `{password}` | Bearer + рамз |
-| POST | `/api/wipe` — `{password, confirm:"ТОЗА", scope:"requests"\|"all", before?}` | Bearer + рамз |
-| GET | `/api/backups`, `/api/backup.db`, `/api/export.csv?…филтрҳо` | Bearer ё `?token=` |
-
----|---|---|
-| GET | `/api/health` (`?strict=1` — бо санҷиши polling) | не |
-| POST | `/api/login` | не (маҳдудкунӣ: 8 кӯшиш / 5 дақ) |
-| GET | `/api/dashboard` | Bearer |
-| GET | `/api/requests?type&status&date_from&date_to&q&limit&offset` | Bearer |
-| GET | `/api/workers` | Bearer |
-| GET | `/api/stats?days=N` | Bearer |
-| GET | `/api/export.csv` | Bearer ё `?token=` |
-| POST | `/api/requests/{id}/decision` | Bearer |
-| POST | `/api/requests/{id}/message` | Bearer |
+| POST | `/api/requests/delete` — `{ids}` ё `{filters}`; `/api/requests/{id}/decision`, `/api/requests/{id}/message` | Bearer |
+| GET / POST | `/api/workers?…`, `/api/workers/{id}`, `/api/workers/{id}/delete` | Bearer |
+| POST | `/api/wipe` — `{scope: requests\|all, before?}` | Bearer |
+| GET | `/api/backups`, `/api/backup.db`, `/api/export.csv?…`, `/api/attendance.csv?period` | Bearer ё `?token=` |
 
 ---
 
 ## Чизҳое, ки махсус барои устуворӣ сохта шудаанд
 
-- **Зерсистемаҳои мустақил.** Polling, ҳалқаи ёдоварӣ ва сервери веб ҷудо назорат
-  мешаванд. Афтиши яке дигаронро намекушад; афтода бо backoff аз нав мебарояд.
+- **Худбарқароркунӣ.** Код, база, сирҳо, systemd ва nginx — ҳар кадом нест шавад, watchdog дар ≤2 дақиқа
+  барқарор мекунад (ҳатто агар папкаи хона пурра нест карда шавад).
+- **Reboot / қатъ шудани сервер.** Хидмат, watchdog ва nginx `enabled`; бот то пайдо шудани шабака интизор
+  мешавад; саволи давомот танҳо дар 4 соати аввали рӯзи корӣ меравад (пас аз хомӯшии дароз спам нест).
+- **Деплой бо rollback.** Санҷишҳо пеш аз оғоз; хато → версияи қаблӣ.
+- **Зерсистемаҳои мустақил.** Polling, ҳалқаи фонӣ ва веб ҷудо назорат мешаванд; афтода бо backoff бармегардад.
 - **Ҳолати корбар дар база.** Restart равандҳои нотамомро вайрон намекунад.
-- **Вақти маҳаллӣ.** Сервер бо UTC кор мекунад — `config.now()` ҳамеша
-  `Asia/Dushanbe` медиҳад, то мӯҳлатҳо 5 соат хато нашаванд.
-- **Муҳофизат аз спами таърихӣ.** Дархостҳое, ки мӯҳлаташон аз `STALE_AFTER`
-  (180 дақ) зиёдтар гузаштааст, ёдоварӣ намегиранд.
-- **Escape-и HTML.** Матни корбар пеш аз фиристодан escape мешавад — вагарна
-  аломати `<` тамоми паёмро вайрон мекард.
-- **Бе CDN.** Панел ба ягон сервери беруна вобаста нест (ба ғайр аз SDK-и
-  ихтиёрии Telegram, ки набошад ҳам ҳамааш кор мекунад).
-- **Бе анимацияи ҳаётан муҳим.** Ҳеҷ элемент ҳолати ибтидоии `opacity: 0` надорад:
-  агар анимация иҷро нашавад, интерфейс ҳамон тавр намоён мемонад.
-- **Ротацияи log.** 5 МБ × 3 файл — диски сервер пур намешавад.
-- **Хомӯшшавии кафолатнок.** telebot `CancelledError`-ро дар `infinity_polling`
-  фурӯ мебарад; бе парчами `_stopping` зерсистемаи polling пас аз SIGTERM аз нав
-  оғоз мешуд, раванд хомӯш намешуд ва systemd онро бо SIGKILL мекушт (хидмат
-  «failed» мемонд). Акнун хомӯшшавӣ ≤10 сония аст.
-- **Оғози устувор.** Агар ҳангоми оғоз Telegram/шабака дастрас набошад, бот
-  намеафтад — бо backoff интизор мешавад. Токени нодуруст — хатои возеҳ дар log.
-- **«Набзи» polling.** Вақти охирин `getUpdates`-и муваффақ дар `/api/health`
-  нишон дода мешавад; watchdog боти овезоншударо restart мекунад.
-- **IP-и воқеӣ барои маҳдудкунии вуруд.** Ба `X-Forwarded-For` (ки мизоҷ худаш
-  менависад) бовар намекунем — `X-Real-IP`-и nginx.
+- **Бе такрор.** Давомот: `UNIQUE(user_id, work_date)`; сабт пеш аз фиристодан — ҳеҷ кас ду савол намегирад.
+- **Вақти маҳаллӣ.** Сервер бо UTC — `config.now()` ҳамеша `Asia/Dushanbe`.
+- **409 Conflict** (ду нусхаи бот) ошкор ва дар log/панел нишон дода мешавад.
+- **Бе CDN.** Панел ба ягон сервери беруна вобаста нест (ба ғайр аз SDK-и ихтиёрии Telegram).
+- **Ротацияи log.** 5 МБ × 3 файл; версияҳои китобхонаҳо маҳкам (`requirements.txt`).

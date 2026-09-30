@@ -178,7 +178,25 @@ async def t_health_and_login():
     check("SECRET_KEY random when unset", len(cfg.SECRET_KEY) == 64)
 
 
+async def t_restore_missing_db():
+    """База нест шуд → пеш аз init_db аз нусхаи охирин барқарор мешавад, на холӣ."""
+    db.init_db()
+    db.touch_employee(42, "Санҷиш", None)
+    path = db.make_backup("daily")
+    check("backup file created", path and os.path.exists(path))
+    for ext in ("", "-wal", "-shm"):
+        try:
+            os.remove(db.DB_PATH + ext)
+        except OSError:
+            pass
+    restored = db.restore_if_missing()
+    db.init_db()
+    check("missing DB restored from newest backup", restored == path and db.get_employee(42) is not None)
+    check("restore is a no-op when DB exists", db.restore_if_missing() is None)
+
+
 async def run():
+    await t_restore_missing_db()
     await t_supervise_cancel_swallowed()
     await t_supervise_flag()
     await t_supervise_restarts_on_crash()

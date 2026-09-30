@@ -19,8 +19,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 APP_NAME = "SoftClub HR Control"
-VERSION = "3.3.0"
-BUILD = "2026092902"          # барои cache-busting дар панел
+VERSION = "4.0.0"
+BUILD = "2026093001"          # барои cache-busting дар панел
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -119,10 +119,28 @@ POLL_STALE_SEC = _i("POLL_STALE_SEC", 300)
 
 
 # ──────────────────────────────────────────────────────────────────────────
+#  Давомот (саволи ҳаррӯзаи «ба кор омадед?»)
+# ──────────────────────────────────────────────────────────────────────────
+
+# Савол танҳо дар ин муддат пас аз оғози кор фиристода мешавад. Агар бот
+# дертар ба кор барояд (масалан, пас аз хомӯшии сервер), ба ҳама саволи
+# «кӯҳна» намеравад.
+ATTENDANCE_WINDOW = _i("ATTENDANCE_WINDOW", 240)       # дақиқа
+ATTENDANCE_REMIND = _i("ATTENDANCE_REMIND", 30)        # як ёдоварӣ пас аз ин қадар дақиқа
+DAILY_REPORT_AFTER = _i("DAILY_REPORT_AFTER", 60)      # ҳисоботи рӯз ба гурӯҳ — пас аз оғози кор
+DEFAULT_GRACE = _i("DEFAULT_GRACE", 10)                # то ин қадар дақиқа «сари вақт» ҳисоб мешавад
+
+# Нусхаи ҳаррӯзаи база ба ин чат (ихтиёрӣ; 0 — хомӯш).
+BACKUP_CHAT_ID = _i("BACKUP_CHAT_ID", 0)
+
+
+# ──────────────────────────────────────────────────────────────────────────
 #  Роҳҳо ва logging
 # ──────────────────────────────────────────────────────────────────────────
 
 DB_PATH = _s("DB_PATH", str(BASE_DIR / "softclub.db"))
+BACKUP_DIR = _s("BACKUP_DIR", str(Path(DB_PATH).resolve().parent / "backups"))
+BACKUP_KEEP = _i("BACKUP_KEEP", 60)
 STATIC_DIR = str(BASE_DIR / "admin_panel")
 LOG_PATH = _s("LOG_PATH", str(BASE_DIR / "bot.log"))
 LOG_LEVEL = _s("LOG_LEVEL", "INFO").upper()

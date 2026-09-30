@@ -28,11 +28,14 @@ import config as cfg
 import database as db
 from admin_server import start_admin_server
 from handlers import (
+    daily_backup,
     housekeeping,
     notify_overdue,
     process_arrival_checks,
     process_work_attendance,
     register_handlers,
+    remind_attendance,
+    send_daily_report,
     send_reminders,
 )
 
@@ -96,9 +99,20 @@ class HRBot(AsyncTeleBot):
     """
 
     last_poll_ok: float = 0.0
+    conflict_at: float = 0.0          # охирин 409: ҳамин токен дар ҷои дигар ҳам кор мекунад
 
     async def get_updates(self, *args, **kwargs):
-        updates = await super().get_updates(*args, **kwargs)
+        try:
+            updates = await super().get_updates(*args, **kwargs)
+        except ApiTelegramException as exc:
+            if exc.error_code == 409:
+                if time.time() - self.conflict_at > 600:   # ҳар 10 дақ. як бор, на спам
+                    logging.getLogger("SoftClubBot").error(
+                        "⚠️ 409 Conflict: ҳамин бот (ҳамин BOT_TOKEN) дар ҷои дигар низ оғоз шудааст "
+                        "(масалан, дар компютер). Ду нусха ҳамзамон кор карда наметавонанд — "
+                        "нусхаи дигарро хомӯш кунед.")
+                self.conflict_at = time.time()
+            raise
         self.last_poll_ok = time.time()
         return updates
 
@@ -124,11 +138,11 @@ _stopping = False
 
 async def setup_commands() -> None:
     await bot.set_my_commands([
-        BotCommand("start", "🚀 Оғоз — интихоби вазъият"),
+        BotCommand("start", "🚀 Оғоз — дархости нав"),
         BotCommand("holat", "📋 Дархостҳои ман"),
         BotCommand("bekor", "❌ Бекор кардани амали ҷорӣ"),
-        BotCommand("help", "ℹ️ Дастурамал"),
-        BotCommand("admin", "🔐 Панели маъмурият"),
+        BotCommand("help", "ℹ️ Бот чӣ кор мекунад"),
+        BotCommand("admin", "🔐 Панели идоракунӣ"),
     ])
     log.info("📋 Менюи фармонҳо навсозӣ шуд")
 
@@ -142,7 +156,8 @@ async def scheduler_task() -> None:
     log.info("🔔 Ҳалқаи ёдоварӣ оғоз шуд (ҳар %d сония)", cfg.LOOP_INTERVAL)
     tick = 0
     while True:
-        for job in (send_reminders, notify_overdue, process_arrival_checks, process_work_attendance):
+        for job in (send_reminders, notify_overdue, process_arrival_checks,
+                    process_work_attendance, remind_attendance, send_daily_report, daily_backup):
             try:
                 await job(bot)
             except asyncio.CancelledError:
@@ -256,6 +271,10 @@ async def main() -> int:
         except (NotImplementedError, RuntimeError):
             pass                                  # Windows — KeyboardInterrupt кор мекунад
 
+    try:
+        db.restore_if_missing()
+    except Exception as exc:                    # барқароркунӣ набояд оғозро боздорад
+        log.error("♻️ Барқароркунии база нашуд: %s", exc)
     db.init_db()
 
     if not await connect_telegram(stop):
