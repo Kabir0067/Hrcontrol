@@ -342,7 +342,7 @@ async def handle_health(request: web.Request) -> web.Response:
 async def handle_login(request: web.Request) -> web.Response:
     ip = _client_ip(request)
     if _rate_limited(ip):
-        return _err("Кӯшишҳо зиёданд. Пас аз чанд дақиқа кӯшиш кунед.", 429)
+        return _err("Дархостҳо зиёданд. Пас аз чанд дақиқа аз нав кӯшиш кунед.", 429)
 
     if not _password_configured():
         log.error("🔒 ADMIN_PASS дар .env гузошта нашудааст — вуруд ба панел баста аст")

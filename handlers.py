@@ -47,8 +47,8 @@ TYPES: dict[str, dict] = {
         "self": "Дер мекунам",
         "third": "Дер мекунад",
         "ask_time": True,
-        "reason_q": "Сабаби дер монданатонро интихоб кунед ё худатон нависед:",
-        "time_q": "Тахминан чанд дақиқа дер мекунед?",
+        "reason_q": "Чаро дер мемонед? Интихоб кунед ё худатон нависед:",
+        "time_q": "Тақрибан чанд дақиқа дер мемонед?",
         "time_word": "дер мекунад",
         "reasons": [
             "Мушкилии нақлиёт",
@@ -63,7 +63,7 @@ TYPES: dict[str, dict] = {
         "self": "Имрӯз намеоям",
         "third": "Имрӯз намеояд",
         "ask_time": False,
-        "reason_q": "Сабаби наомаданатонро интихоб кунед ё худатон нависед:",
+        "reason_q": "Чаро имрӯз намеоед? Интихоб кунед ё худатон нависед:",
         "time_q": None,
         "time_word": "",
         "reasons": [
@@ -79,8 +79,8 @@ TYPES: dict[str, dict] = {
         "self": "Ҷавоб мегирам",
         "third": "Ҷавоб мепурсад",
         "ask_time": True,
-        "reason_q": "Барои чӣ ба Шумо ҷавоб лозим аст?",
-        "time_q": "Чанд дақиқа вақт лозим аст?",
+        "reason_q": "Барои чӣ меравед? Интихоб кунед ё худатон нависед:",
+        "time_q": "Чанд дақиқа лозим аст?",
         "time_word": "ҷавоб мепурсад",
         "reasons": [
             "Кори шахсӣ",
@@ -95,8 +95,8 @@ TYPES: dict[str, dict] = {
         "self": "Барвақт меравам",
         "third": "Барвақт меравад",
         "ask_time": True,
-        "reason_q": "Сабаби барвақт рафтанатонро интихоб кунед ё нависед:",
-        "time_q": "Баъди чанд дақиқа аз кор меравед?",
+        "reason_q": "Чаро барвақт меравед? Интихоб кунед ё худатон нависед:",
+        "time_q": "Баъди чанд дақиқа меравед?",
         "time_word": "барвақт меравад",
         "reasons": [
             "Кори шахсӣ",
@@ -137,10 +137,10 @@ MONTHS_GEN = ["январ", "феврал", "март", "апрел", "май", 
               "сентябр", "октябр", "ноябр", "декабр"]
 
 STATUS_WORD = {
-    "pending": "⏳ Дар интизорӣ",
+    "pending": "⏳ Интизори ҷавоб",
     "accepted": "✅ Иҷозат дода шуд",
-    "rejected": "✋ Рад карда шуд",
-    "cancelled": "🚫 Бекор карда шуд",
+    "rejected": "✋ Рад шуд",
+    "cancelled": "🚫 Бекор шуд",
 }
 
 
@@ -214,7 +214,7 @@ def _from_group(call: CallbackQuery) -> bool:
 # ══════════════════════════════════════════════════════════════════════════
 
 def _main_reply_kb() -> ReplyKeyboardMarkup:
-    kb = ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="Вазъиятро интихоб кунед…")
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="Интихоб кунед…")
     kb.row(KeyboardButton("📝 Дархости нав"))
     kb.row(KeyboardButton("📋 Дархостҳои ман"), KeyboardButton("ℹ️ Кӯмак"))
     return kb
@@ -234,7 +234,7 @@ def _kb_reasons(req_type: str) -> InlineKeyboardMarkup:
     buttons = [InlineKeyboardButton(r, callback_data=f"r:{i}") for i, r in enumerate(reasons)]
     for i in range(0, len(buttons), 2):
         kb.row(*buttons[i:i + 2])
-    kb.row(InlineKeyboardButton("✍️ Сабаби дигар менависам", callback_data="r:x"))
+    kb.row(InlineKeyboardButton("✍️ Худам менависам", callback_data="r:x"))
     kb.row(InlineKeyboardButton("‹ Бозгашт", callback_data="f:back_type"),
            InlineKeyboardButton("❌ Бекор", callback_data="f:cancel"))
     return kb
@@ -245,7 +245,7 @@ def _kb_minutes() -> InlineKeyboardMarkup:
     buttons = [InlineKeyboardButton(str(m), callback_data=f"m:{m}") for m in QUICK_MINUTES]
     for i in range(0, len(buttons), 4):
         kb.row(*buttons[i:i + 4])
-    kb.row(InlineKeyboardButton("✍️ Рақами дигар", callback_data="m:x"))
+    kb.row(InlineKeyboardButton("✍️ Вақти дигар", callback_data="m:x"))
     kb.row(InlineKeyboardButton("‹ Бозгашт", callback_data="f:back_reason"),
            InlineKeyboardButton("❌ Бекор", callback_data="f:cancel"))
     return kb
@@ -256,13 +256,13 @@ def _kb_extra_minutes() -> InlineKeyboardMarkup:
     buttons = [InlineKeyboardButton(str(m), callback_data=f"am:{m}") for m in QUICK_EXTRA_MINUTES]
     for i in range(0, len(buttons), 3):
         kb.row(*buttons[i:i + 3])
-    kb.row(InlineKeyboardButton("✍️ Рақами дигар", callback_data="am:x"))
+    kb.row(InlineKeyboardButton("✍️ Вақти дигар", callback_data="am:x"))
     return kb
 
 
 def _kb_confirm() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(InlineKeyboardButton("✅ Фиристодан ба роҳбарият", callback_data="f:send"))
+    kb.add(InlineKeyboardButton("✅ Фиристодан", callback_data="f:send"))
     kb.row(InlineKeyboardButton("✏️ Аз нав", callback_data="f:back_type"),
            InlineKeyboardButton("❌ Бекор", callback_data="f:cancel"))
     return kb
@@ -327,7 +327,7 @@ def _kb_admin_decision(req_id: int) -> InlineKeyboardMarkup:
 
 def _kb_admin_after(req_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("💬 Паём ба ҳамкор", callback_data=f"fb:{req_id}"))
+    kb.add(InlineKeyboardButton("💬 Паём ба корманд", callback_data=f"fb:{req_id}"))
     return kb
 
 
@@ -338,16 +338,16 @@ def _kb_admin_after(req_id: int) -> InlineKeyboardMarkup:
 def _welcome(first_name: str) -> str:
     return (
         f"👋 Салом, <b>{_esc(first_name)}</b>!\n\n"
-        "Ин боти кории <b>SoftClub</b> аст. Агар дер монед, ба кор наоед ё "
-        "ҷавоб пурсед — ҳамин ҷо хабар диҳед, роҳбарият дарҳол мебинад.\n\n"
-        "Ҷавоби роҳбарият ҳам ҳамин ҷо меояд. 👇"
+        "Ин боти кории <b>SoftClub</b> аст.\n"
+        "Агар дер монед, наоед ё ҷавоб пурсед — ҳамин ҷо нависед.\n"
+        "Роҳбарият зуд мебинад ва ҷавобаш ҳам ҳамин ҷо меояд. 👇"
     )
 
 
 def _preview(req_type: str, reason: str, minutes: int) -> str:
     meta = TYPES[req_type]
     lines = [
-        "🔎 <b>Дархости Шумо</b>",
+        "🔎 <b>Дархости шумо</b>",
         "",
         f"{meta['emoji']} <b>{meta['self']}</b>",
         f"📝 {_esc(reason)}",
@@ -355,7 +355,7 @@ def _preview(req_type: str, reason: str, minutes: int) -> str:
     if minutes > 0:
         until = (cfg.now() + timedelta(minutes=minutes)).strftime("%H:%M")
         lines.append(f"⏳ {_human_minutes(minutes)} · то соати <b>{until}</b>")
-    lines += ["", "<i>Ҳамааш дуруст аст?</i>"]
+    lines += ["", "<i>Ҳамааш дуруст?</i>"]
     return "\n".join(lines)
 
 
@@ -381,11 +381,11 @@ def _group_text(rec: dict) -> str:
     lines.append("")
 
     if status == "pending":
-        lines.append("⏳ <i>Дар интизори қарори роҳбарият…</i>")
+        lines.append("⏳ <i>Ҷавобро интизорем…</i>")
     else:
         head = STATUS_WORD.get(status, status)
         if status == "cancelled":
-            lines.append(f"🚫 <b>Ҳамкор худаш бекор кард</b> · {_clock(rec.get('decided_at')) if rec.get('decided_at') else ''}".rstrip(" ·"))
+            lines.append(f"🚫 <b>Корманд худаш бекор кард</b> · {_clock(rec.get('decided_at')) if rec.get('decided_at') else ''}".rstrip(" ·"))
         else:
             who = _short_name(rec.get("decided_by") or "")
             tail = f" · {_esc(who)}" if who else ""
@@ -393,9 +393,9 @@ def _group_text(rec: dict) -> str:
 
     confirmed = rec.get("worker_confirmed")
     if confirmed == "yes":
-        lines.append("✅ Ҳамкор тасдиқ кард: ҳамааш хуб аст")
+        lines.append("✅ Корманд гуфт: ҳамааш хуб")
     elif confirmed == "no":
-        lines.append("⚠️ Ҳамкор гуфт: ҳанӯз мушкилӣ дорад")
+        lines.append("⚠️ Корманд гуфт: ҳанӯз мушкил дорад")
 
     return "\n".join(lines)
 
@@ -403,7 +403,7 @@ def _group_text(rec: dict) -> str:
 def _worker_receipt(rec: dict) -> str:
     meta = TYPES.get(rec["type"], {"emoji": "📋", "self": "Дархост"})
     lines = [
-        "✅ <b>Дархостатон фиристода шуд</b>",
+        "✅ <b>Дархост фиристода шуд</b>",
         "",
         f"{meta['emoji']} {meta['self']}",
         f"📝 {_esc(rec['reason'])}",
@@ -411,9 +411,9 @@ def _worker_receipt(rec: dict) -> str:
     if rec.get("minutes"):
         lines.append(f"⏳ {_human_minutes(rec['minutes'])} · то <b>{_clock(rec.get('deadline_at'))}</b>")
     lines += [
-        f"🔖 Рақами дархост: <code>#{rec['id']}</code>",
+        f"🔖 Рақам: <code>#{rec['id']}</code>",
         "",
-        "<i>Ҳамин ки роҳбарият ҷавоб дод, ба Шумо хабар медиҳам.</i>",
+        "<i>Вақте роҳбарият ҷавоб диҳад, ба шумо хабар медиҳам.</i>",
     ]
     return "\n".join(lines)
 
@@ -423,26 +423,26 @@ def _help_text() -> str:
         "ℹ️ <b>Бот чӣ кор мекунад</b>\n\n"
         "<b>1. Давомот</b>\n"
         "Ҳар рӯзи корӣ, вақте кор сар мешавад, бот мепурсад: «Ба кор омадед?»\n"
-        "• <b>✅ Омадам</b> — вақти омаданатон қайд мешавад\n"
-        "• <b>❌ Наомадам</b> — сабаб ва вақти омаданатонро менависед\n"
+        "• <b>✅ Омадам</b> — вақти омадан қайд мешавад\n"
+        "• <b>❌ Наомадам</b> — мегӯед чаро ва кай меоед\n"
         "Рӯзи якшанбе савол намеояд.\n\n"
         "<b>2. Дархост ба роҳбарият</b>\n"
-        "«📝 Дархости нав»-ро пахш кунед ва вазъиятро интихоб кунед:\n"
+        "«📝 Дархости нав»-ро пахш кунед ва интихоб кунед:\n"
         "🕰 <b>Дер мекунам</b> — каме дертар меоям\n"
         "🌿 <b>Имрӯз намеоям</b> — имрӯз омада наметавонам\n"
-        "☕ <b>Ҷавоб мегирам</b> — дар корам, вале бояд чанд вақт равам\n"
-        "🌅 <b>Барвақт меравам</b> — имрӯз барвақттар меравам\n\n"
-        "Сабабро аз тугмаҳо интихоб кунед ё худатон нависед. "
+        "☕ <b>Ҷавоб мегирам</b> — бояд каме равам ва баргардам\n"
+        "🌅 <b>Барвақт меравам</b> — имрӯз пештар меравам\n\n"
+        "Сабабро интихоб кунед ё худатон нависед. "
         "Ҷавоби роҳбарият ҳамин ҷо меояд.\n\n"
         "<b>Ёдовариҳо</b>\n"
-        f"• {cfg.REMINDER_LEAD} дақиқа пеш аз тамом шудани вақт хабар медиҳам\n"
-        "• Агар «Дер мекунам» фиристода бошед, дар вақти гуфтаатон мепурсам, ки расидед ё не\n\n"
+        f"• {cfg.REMINDER_LEAD} дақиқа пеш аз тамоми вақт хабар медиҳам\n"
+        "• Агар «Дер мекунам» фиристед, дар вақти гуфтаатон мепурсам, ки расидед ё не\n\n"
         "<b>Фармонҳо</b>\n"
         "/start — оғоз\n"
         "/holat — дархостҳои ман\n"
-        "/bekor — бекор кардани амали ҷорӣ\n"
+        "/bekor — бекор кардан\n"
         "/help — ҳамин дастур\n\n"
-        "<i>Дархостро то ҷавоби роҳбарият бекор карда метавонед.</i>"
+        "<i>То ҷавоби роҳбарият дархостро бекор карда метавонед.</i>"
     )
 
 
@@ -450,10 +450,10 @@ def _my_requests_text(rows: list[dict]) -> str:
     if not rows:
         return (
             "📋 <b>Дархостҳои ман</b>\n\n"
-            "Ҳоло ягон дархост надоред.\n"
+            "Ҳоло дархост надоред.\n"
             "«📝 Дархости нав»-ро пахш кунед."
         )
-    lines = ["📋 <b>Дархостҳои охирини Шумо</b>", ""]
+    lines = ["📋 <b>Дархостҳои охирини шумо</b>", ""]
     for rec in rows:
         meta = TYPES.get(rec["type"], {"emoji": "📋", "third": "Дархост"})
         lines.append(
@@ -490,13 +490,13 @@ def _att_prompt_text(name: str, clock: str, reminder: bool = False) -> str:
     if reminder:
         return (
             "⏰ <b>Ёдоварӣ</b>\n\n"
-            f"{first}, шумо ҳанӯз ҷавоб надодаед.\n"
-            "<b>Имрӯз ба кор омадед?</b>"
+            f"{first}, шумо ҳанӯз ҷавоб надодед.\n"
+            "<b>Ба кор омадед?</b>"
         )
     return (
-        f"🌅 <b>Субҳ ба хайр, {first}!</b>\n\n"
-        f"Соати {clock} — вақти оғози кор.\n"
-        "<b>Шумо ба кор омадед?</b>"
+        f"☀️ <b>Рӯз ба хайр, {first}!</b>\n\n"
+        f"Вақти кор шуд — соати {clock}.\n"
+        "<b>Ба кор омадед?</b>"
     )
 
 
@@ -513,7 +513,7 @@ def _att_eta_text(key: str) -> str:
 
 def _att_group_absent(rec: dict) -> str:
     return (
-        f"🔴 <b>{_esc(_short_name(rec['name']))}</b> имрӯз ҳанӯз наомадааст\n"
+        f"🔴 <b>{_esc(_short_name(rec['name']))}</b> ҳанӯз ба кор наомадааст\n"
         f"📝 Сабаб: <i>{_esc(rec.get('reason') or '—')}</i>\n"
         f"🕐 Кай меояд: <b>{_esc(rec.get('eta') or '—')}</b>"
     )
@@ -537,7 +537,7 @@ def daily_report_text(day: dict) -> str:
     lines = [
         f"📋 <b>Давомоти имрӯз</b> · {_date_words(day['date'])}",
         f"Оғози кор: <b>{day['schedule']['time']}</b>"
-        + (" (баъзеҳо — вақти алоҳида)" if any(it.get("custom") for it in day["items"]) else ""),
+        + (" (баъзеҳо вақти дигар доранд)" if any(it.get("custom") for it in day["items"]) else ""),
         "",
         f"✅ Сари вақт омаданд: <b>{s['on_time']}</b>",
     ]
@@ -562,7 +562,7 @@ def daily_report_text(day: dict) -> str:
                     and it.get("works") and (it.get("start") or "") > now_clock),
                    key=lambda it: it["start"])
     if later:
-        lines.append(f"🕑 Кори онҳо баъдтар сар мешавад: <b>{len(later)}</b>")
+        lines.append(f"🕑 Кори онҳо дертар сар мешавад: <b>{len(later)}</b>")
         lines += names(later, lambda r: f"   • {_esc(_short_name(r['name']))} — аз {r['start']}")
     return "\n".join(lines)
 
@@ -581,10 +581,10 @@ async def apply_decision(bot: AsyncTeleBot, req_id: int, decision: str, admin_na
         return False, "Дархост ёфт нашуд."
 
     if rec["status"] != "pending":
-        return False, f"Аллакай коркард шудааст: {STATUS_WORD.get(rec['status'], rec['status'])}"
+        return False, f"Ба ин дархост аллакай ҷавоб дода шуд: {STATUS_WORD.get(rec['status'], rec['status'])}"
 
     if not db.update_status(req_id, decision, admin_name):
-        return False, "Дархост дар ҳамин лаҳза аз ҷониби каси дигар коркард шуд."
+        return False, "Каси дигар ҳозир ба ин дархост ҷавоб дод."
 
     rec = db.get_request(req_id) or rec
 
@@ -619,32 +619,32 @@ def _decision_text(rec: dict, decision: str, admin_name: str) -> str:
 
     if decision == "rejected":
         return (
-            "✋ <b>Дархостатон қабул нашуд</b>\n\n"
-            f"Роҳбарият (<b>{who}</b>) ба дархости <code>#{rec['id']}</code> иҷозат надод.\n"
-            "Барои маълумоти бештар мустақиман бо роҳбарият сӯҳбат кунед."
+            "✋ <b>Дархост рад шуд</b>\n\n"
+            f"<b>{who}</b> ба дархости <code>#{rec['id']}</code> иҷозат надод.\n"
+            "Барои тафсилот бо роҳбарият гап занед."
         )
 
     lines = [
         "🎉 <b>Иҷозат дода шуд!</b>",
         "",
-        f"Роҳбарият (<b>{who}</b>) дархости <code>#{rec['id']}</code>-ро тасдиқ кард.",
+        f"<b>{who}</b> дархости <code>#{rec['id']}</code>-ро қабул кард.",
     ]
 
     req_type = rec["type"]
     until = _clock(rec.get("deadline_at"))
 
     if req_type == "absent":
-        lines += ["", "🌿 Роҳбарият огоҳ аст, ки имрӯз ба кор намеоед.", "Саломатии хуб хоҳонам! 🙏"]
+        lines += ["", "🌿 Роҳбарият медонад, ки имрӯз намеоед.", "Ҳамааш хуб шавад! 🙏"]
     elif rec.get("minutes") and rec.get("deadline_at"):
         if req_type == "late":
-            lines += ["", f"🕰 Интизорем, ки то соати <b>{until}</b> ба кор мерасед.",
-                      "🔔 Дар ҳамон вақт аз Шумо мепурсам, ки расидед ё не."]
+            lines += ["", f"🕰 Интизорем, ки то соати <b>{until}</b> меоед.",
+                      "🔔 Ҳамон вақт мепурсам, ки расидед ё не."]
         elif req_type == "leaving_early":
-            lines += ["", f"🌅 Соати <b>{until}</b> метавонед аз кор равед.",
-                      f"🔔 {cfg.REMINDER_LEAD} дақиқа пеш ёдовар мешавам."]
+            lines += ["", f"🌅 Соати <b>{until}</b> метавонед равед.",
+                      f"🔔 {cfg.REMINDER_LEAD} дақиқа пеш хабар медиҳам."]
         elif req_type == "at_work_waiting":
             lines += ["", f"☕ То соати <b>{until}</b> вақт доред ({_human_minutes(rec['minutes'])}).",
-                      f"🔔 {cfg.REMINDER_LEAD} дақиқа пеш ёдовар мешавам."]
+                      f"🔔 {cfg.REMINDER_LEAD} дақиқа пеш хабар медиҳам."]
 
     return "\n".join(lines)
 
@@ -662,7 +662,7 @@ async def send_worker_message(bot: AsyncTeleBot, req_id: int, text: str, admin_n
     )
     ok = await _safe(bot.send_message(rec["user_id"], body))
     if ok is None:
-        return False, "Паём нарасид — шояд ҳамкор ботро бастааст."
+        return False, "Паём нарасид — шояд корманд ботро бастааст."
     return True, "Паём фиристода шуд"
 
 
@@ -680,7 +680,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             await _safe(bot.send_message(
                 chat_id, _welcome(user.first_name or "ҳамкор"), reply_markup=_main_reply_kb()))
         await _safe(bot.send_message(
-            chat_id, "<b>Имрӯз чӣ хабар?</b>\nВазъиятатонро интихоб кунед:",
+            chat_id, "<b>Чӣ хабар?</b>\nЯке аз инҳоро интихоб кунед:",
             reply_markup=_kb_types()))
 
     async def ask_reason(chat_id: int, req_type: str, message_id: int | None = None) -> None:
@@ -698,7 +698,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         text = (
             f"{meta['emoji']} <b>{meta['self']}</b>\n\n"
             f"⏳ {meta['time_q']}\n"
-            "<i>Аз тугмаҳо интихоб кунед (бо дақиқа):</i>"
+            "<i>Дақиқаро интихоб кунед:</i>"
         )
         if message_id:
             edited = await _safe(bot.edit_message_text(
@@ -738,7 +738,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         req_id = db.add_request(user.id, name, req_type, reason, minutes)
         rec = db.get_request(req_id)
         if not rec:
-            await _safe(bot.send_message(chat_id, "⚠️ Хатогӣ рӯй дод. Лутфан аз нав кӯшиш кунед."))
+            await _safe(bot.send_message(chat_id, "⚠️ Хато шуд. Боз як бор кӯшиш кунед."))
             return
 
         sent = await _safe(bot.send_message(
@@ -749,7 +749,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             await _safe(bot.send_message(
                 chat_id,
                 "⚠️ <b>Дархост ба роҳбарият нарасид</b>\n\n"
-                "Бот ба гурӯҳи корӣ дастрасӣ надорад. Лутфан ба барномасоз хабар диҳед.",
+                "Бот ба гурӯҳи роҳбарият навишта натавонист. Ба барномасоз хабар диҳед.",
             ))
             log.error("❌ Ба гурӯҳ %s фиристода нашуд (дархост #%d)", GROUP_ID, req_id)
             return
@@ -772,7 +772,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             log.error("Давомот аз дархост #%d сабт нашуд: %s", req_id, exc)
         if att and att.get("msg_id"):
             await _safe(bot.edit_message_text(
-                "📝 <b>Қайд шуд.</b>\n\nСабаби шумо аз дархост гирифта шуд. "
+                "📝 <b>Қайд шуд.</b>\n\nСабабро аз дархостатон гирифтем. "
                 "Вақте ба кор омадед, тугмаи поёнро пахш кунед.",
                 chat_id=user.id, message_id=att["msg_id"],
                 reply_markup=_kb_att_arrived(att["id"]),
@@ -797,9 +797,9 @@ def register_handlers(bot: AsyncTeleBot) -> None:
     @bot.message_handler(commands=["bekor", "cancel"], func=_private)
     async def cmd_cancel(message: Message):
         had = db.clear_state(message.from_user.id)
-        text = ("❌ Амалиёт бекор карда шуд." if had
-                else "ℹ️ Ҳоло амали нотамом надоред.")
-        await _safe(bot.send_message(message.chat.id, f"{text}\n\nБарои оғоз /start-ро пахш кунед."))
+        text = ("❌ Бекор шуд." if had
+                else "ℹ️ Ҳозир ягон кори нотамом нест.")
+        await _safe(bot.send_message(message.chat.id, f"{text}\n\nБарои сар кардан /start-ро пахш кунед."))
 
     @bot.message_handler(commands=["admin", "panel"], func=_private)
     async def cmd_admin(message: Message):
@@ -809,10 +809,10 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         kb.add(InlineKeyboardButton("🌐 Кушодан дар браузер", url=cfg.WEBAPP_URL))
         await _safe(bot.send_message(
             message.chat.id,
-            "🔐 <b>Панели идоракунӣ</b>\n\n"
-            "Давомот, дархостҳо, кормандон ва омор — ҳама дар як ҷо.\n\n"
-            "📱 <b>Telegram</b> — панел ҳамин ҷо, дар дохили Telegram кушода мешавад.\n"
-            "🌐 <b>Браузер</b> — барои компютер ва планшет қулай аст.\n\n"
+            "🔐 <b>Панели идора</b>\n\n"
+            "Давомот, дархостҳо, кормандон ва омор — дар як ҷо.\n\n"
+            "📱 <b>Telegram</b> — ҳамин ҷо мекушояд.\n"
+            "🌐 <b>Браузер</b> — барои компютер ва планшет.\n\n"
             f"<i>Суроға: {_esc(cfg.WEBAPP_URL)}</i>",
             reply_markup=kb,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -824,20 +824,20 @@ def register_handlers(bot: AsyncTeleBot) -> None:
     async def cb_type(call: CallbackQuery):
         req_type = call.data.split(":", 1)[1] if call.data.startswith("t:") else call.data[5:]
         if req_type not in TYPES:
-            await _safe(bot.answer_callback_query(call.id, "Вазъияти номаълум"))
+            await _safe(bot.answer_callback_query(call.id, "Чунин интихоб нест"))
             return
 
         open_reqs = db.get_open_requests(call.from_user.id)
         if len(open_reqs) >= cfg.MAX_OPEN_REQUESTS:
             rec = open_reqs[0]
             kb = InlineKeyboardMarkup()
-            kb.add(InlineKeyboardButton("❌ Дархости пешинаро бекор кунам",
+            kb.add(InlineKeyboardButton("❌ Дархости пешинаро бекор кардан",
                                         callback_data=f"c:{rec['id']}"))
-            await _safe(bot.answer_callback_query(call.id, "Дархости коркарднашуда доред"))
+            await _safe(bot.answer_callback_query(call.id, "Дархости бе ҷавоб доред"))
             await _safe(bot.send_message(
                 call.message.chat.id,
-                f"⏳ <b>Дархости <code>#{rec['id']}</code> ҳанӯз дар интизори ҷавоб аст.</b>\n\n"
-                "Аввал ҷавоби роҳбариятро гиред ё дархости пешинаро бекор кунед.",
+                f"⏳ <b>Дархости <code>#{rec['id']}</code> ҳанӯз ҷавоб нагирифтааст.</b>\n\n"
+                "Интизор шавед ё онро бекор кунед.",
                 reply_markup=kb,
             ))
             return
@@ -852,7 +852,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
     async def cb_reason(call: CallbackQuery):
         state = db.get_state(call.from_user.id)
         if not state or state.get("step") != "reason":
-            await _safe(bot.answer_callback_query(call.id, "Ин раванд тамом шудааст. /start"))
+            await _safe(bot.answer_callback_query(call.id, "Ин кор тамом шуд. /start-ро пахш кунед"))
             return
 
         choice = call.data.split(":", 1)[1]
@@ -862,7 +862,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             state["step"] = "reason_text"
             db.set_state(call.from_user.id, state)
             await _safe(bot.edit_message_text(
-                "✍️ <b>Сабабро бо як ҷумла нависед:</b>",
+                "✍️ <b>Сабабро кӯтоҳ нависед:</b>",
                 chat_id=call.message.chat.id, message_id=call.message.message_id,
                 reply_markup=_kb_cancel_only(),
             ))
@@ -883,7 +883,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
     async def cb_minutes(call: CallbackQuery):
         state = db.get_state(call.from_user.id)
         if not state or state.get("step") != "minutes":
-            await _safe(bot.answer_callback_query(call.id, "Ин раванд тамом шудааст. /start"))
+            await _safe(bot.answer_callback_query(call.id, "Ин кор тамом шуд. /start-ро пахш кунед"))
             return
 
         choice = call.data.split(":", 1)[1]
@@ -917,7 +917,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             db.clear_state(uid)
             await _safe(bot.answer_callback_query(call.id, "❌ Бекор шуд"))
             await _safe(bot.edit_message_text(
-                "❌ <b>Амалиёт бекор карда шуд.</b>\n\nБарои оғози нав /start-ро пахш кунед.",
+                "❌ <b>Бекор шуд.</b>\n\nБарои дархости нав /start-ро пахш кунед.",
                 chat_id=chat_id, message_id=mid,
             ))
             return
@@ -926,14 +926,14 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             db.clear_state(uid)
             await _safe(bot.answer_callback_query(call.id))
             await _safe(bot.edit_message_text(
-                "<b>Вазъиятро интихоб кунед:</b>",
+                "<b>Интихоб кунед:</b>",
                 chat_id=chat_id, message_id=mid, reply_markup=_kb_types(),
             ))
             return
 
         state = db.get_state(uid)
         if not state:
-            await _safe(bot.answer_callback_query(call.id, "Ин раванд тамом шудааст. /start"))
+            await _safe(bot.answer_callback_query(call.id, "Ин кор тамом шуд. /start-ро пахш кунед"))
             return
 
         if action == "back_reason":
@@ -946,7 +946,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
 
         if action == "send":
             if state.get("step") != "confirm":
-                await _safe(bot.answer_callback_query(call.id, "Раванд тамом нашудааст"))
+                await _safe(bot.answer_callback_query(call.id, "Ҳанӯз тамом нашуд"))
                 return
             db.clear_state(uid)
             await _safe(bot.answer_callback_query(call.id, "📤 Фиристода шуд"))
@@ -971,7 +971,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             return
 
         if rec["user_id"] != call.from_user.id:
-            await _safe(bot.answer_callback_query(call.id, "Ин дархости Шумо нест"))
+            await _safe(bot.answer_callback_query(call.id, "Ин дархости шумо нест"))
             return
 
         if not db.cancel_request(req_id):
@@ -1058,7 +1058,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             GROUP_ID,
             f"✍️ <b>{_esc(_short_name(_display_name(call.from_user)))}</b>, "
             f"паёматонро ба <b>{_esc(_short_name(rec['name']))}</b> нависед.\n"
-            "<i>Паёми навбатии Шумо дар ин гурӯҳ ба ӯ мерасад.</i>",
+            "<i>Паёми навбатии шумо дар ин гурӯҳ ба ӯ меравад.</i>",
         ))
 
     # ── тасдиқи ҳамкор баъди ёдоварӣ ────────────────────────────────────
@@ -1096,7 +1096,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         if answer == "yes":
             await _safe(bot.answer_callback_query(call.id, "✅ Раҳмат!"))
             await _safe(bot.edit_message_text(
-                "✨ <b>Ташаккур барои ҷавоб!</b>\n\nХурсандем, ки ҳамааш хуб аст. Барори кор! 🎉",
+                "✨ <b>Ташаккур!</b>\n\nКори хуб! 🎉",
                 chat_id=call.message.chat.id, message_id=call.message.message_id,
             ))
             await _safe(bot.send_message(
@@ -1107,12 +1107,12 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         else:
             await _safe(bot.answer_callback_query(call.id, "💬 Қабул шуд"))
             await _safe(bot.edit_message_text(
-                "💬 <b>Қабул шуд.</b>\n\nРоҳбарият огоҳ карда шуд ва бо Шумо дар тамос мешавад.",
+                "💬 <b>Фаҳмидем.</b>\n\nРоҳбарият огоҳ шуд ва бо шумо гап мезанад.",
                 chat_id=call.message.chat.id, message_id=call.message.message_id,
             ))
             await _safe(bot.send_message(
                 GROUP_ID,
-                f"⚠️ <b>{name}</b> хабар дод, ки ҳанӯз мушкилӣ дорад.\n"
+                f"⚠️ <b>{name}</b> мегӯяд, ки ҳанӯз мушкил дорад.\n"
                 f"<code>#{req_id}</code> · {clock}",
             ))
 
@@ -1180,7 +1180,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             late = _late_note(rec)
             await _safe(bot.answer_callback_query(call.id, "✅ Қайд шуд"))
             await _safe(bot.edit_message_text(
-                f"✅ <b>Қайд шуд.</b> Шумо соати <b>{clock}</b> ба кор омадед{late}.\n\nРӯзи хуб! ☀️",
+                f"✅ <b>Қайд шуд.</b> Соати <b>{clock}</b> омадед{late}.\n\nКори хуб! ☀️",
                 chat_id=chat_id, message_id=mid))
             if was_absent:
                 await _safe(bot.send_message(
@@ -1195,7 +1195,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             db.set_state(call.from_user.id, {"step": "att_reason", "attendance_id": attendance_id})
             await _safe(bot.answer_callback_query(call.id))
             await _safe(bot.edit_message_text(
-                "📝 <b>Сабаби наомаданатон чист?</b>\n\nАз тугмаҳо интихоб кунед ё худатон нависед:",
+                "📝 <b>Чаро наомадед?</b>\n\nИнтихоб кунед ё худатон нависед:",
                 chat_id=chat_id, message_id=mid, reply_markup=_kb_att_reasons(attendance_id)))
             return
 
@@ -1317,8 +1317,8 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             await _safe(bot.answer_callback_query(call.id, "✅ Хуш омадед!"))
             await _safe(bot.edit_message_text(
                 f"🎉 <b>Хуш омадед!</b>\n\n"
-                f"Роҳбарият огоҳ шуд, ки соати <b>{clock}</b> ба кор расидед.\n"
-                "Рӯзи кории бобарор! ✨",
+                f"Роҳбарият медонад, ки соати <b>{clock}</b> расидед.\n"
+                "Кори хуб! ✨",
                 chat_id=call.message.chat.id, message_id=call.message.message_id,
             ))
             await _safe(bot.send_message(
@@ -1335,7 +1335,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         })
         await _safe(bot.answer_callback_query(call.id))
         await _safe(bot.edit_message_text(
-            "✍️ <b>Фаҳмо.</b>\n\nСабаби боз каме дер монданатонро нависед:",
+            "✍️ <b>Хуб.</b>\n\nЧаро боз дер мемонед? Кӯтоҳ нависед:",
             chat_id=call.message.chat.id, message_id=call.message.message_id,
             reply_markup=_kb_cancel_only(),
         ))
@@ -1376,7 +1376,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         # тугмаҳои клавиатураи доимӣ
         if text.startswith("📝"):
             db.clear_state(uid)
-            await _safe(bot.send_message(message.chat.id, "<b>Вазъиятро интихоб кунед:</b>",
+            await _safe(bot.send_message(message.chat.id, "<b>Интихоб кунед:</b>",
                                          reply_markup=_kb_types()))
             return
         if text.startswith("📋"):
@@ -1447,15 +1447,15 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         if step in ("reason", "minutes", "confirm", "arrival_minutes"):
             await _safe(bot.send_message(
                 message.chat.id,
-                "💡 Лутфан аз тугмаҳои боло интихоб кунед.\n"
-                "Ё /bekor -ро пахш кунед, то аз нав оғоз намоед.",
+                "💡 Аз тугмаҳои боло интихоб кунед.\n"
+                "Барои аз нав сар кардан — /bekor.",
             ))
             return
 
         # ҳолати оддӣ — менюи мухтасар, на матни пурраи хушомадед
         await _safe(bot.send_message(
             message.chat.id,
-            "🤖 Барои фиристодани дархост вазъиятро интихоб кунед:",
+            "🤖 Барои дархост яке аз инҳоро интихоб кунед:",
             reply_markup=_kb_types(),
         ))
 
@@ -1527,7 +1527,7 @@ async def _finish_arrival_delay(bot: AsyncTeleBot, chat_id: int, user,
     await _safe(bot.send_message(
         chat_id,
         f"✨ <b>Ташаккур!</b>\n\n"
-        f"Роҳбариятро огоҳ кардам.\n"
+        f"Ба роҳбарият хабар додам.\n"
         f"⏳ Соати <b>{new_clock}</b> бори дигар мепурсам.\nРоҳи сафед! 🚶",
     ))
 
@@ -1544,15 +1544,15 @@ async def send_reminders(bot: AsyncTeleBot) -> None:
         meta = TYPES.get(rec["type"], {"emoji": "🔔", "third": "дархост"})
 
         questions = {
-            "late": "Оё аллакай ба кор расидед?",
-            "at_work_waiting": "Оё кори худро ҳал кардед?",
-            "leaving_early": "Оё аз кор рафтед?",
+            "late": "Ба кор расидед?",
+            "at_work_waiting": "Коратонро тамом кардед?",
+            "leaving_early": "Аз кор рафтед?",
         }
 
         if remaining > 0:
-            timing = f"⏳ <b>{remaining} дақиқа</b> боқӣ мондааст."
+            timing = f"⏳ <b>{remaining} дақиқа</b> монд."
         else:
-            timing = f"⏳ Вақти муайяншуда (<b>{_clock(rec.get('deadline_at'))}</b>) расид."
+            timing = f"⏳ Вақт расид (<b>{_clock(rec.get('deadline_at'))}</b>)."
 
         text = (
             f"🔔 <b>Ёдоварӣ</b> · <code>#{req_id}</code>\n\n"
@@ -1585,15 +1585,15 @@ async def notify_overdue(bot: AsyncTeleBot) -> None:
         meta = TYPES.get(rec["type"], {"emoji": "📋", "third": "дархост"})
         await _safe(bot.send_message(
             GROUP_ID,
-            f"⏰ <b>Ҷавоб нагирифтем</b>\n\n"
+            f"⏰ <b>Ҷавоб надод</b>\n\n"
             f"👤 <b>{_esc(_short_name(rec['name']))}</b>\n"
             f"{meta['emoji']} {meta['third']} · <code>#{rec['id']}</code>\n"
-            f"Вақташ ({_clock(rec.get('deadline_at'))}) гузашт, вале ҷавоб надод.",
+            f"Вақташ ({_clock(rec.get('deadline_at'))}) гузашт.",
         ))
         await _safe(bot.send_message(
             rec["user_id"],
-            "💬 <b>Вақти муайяншуда ба анҷом расид.</b>\n\n"
-            "Лутфан ба ёдоварии қаблӣ ҷавоб диҳед, то роҳбарият огоҳ бошад. Ташаккур!",
+            "💬 <b>Вақт тамом шуд.</b>\n\n"
+            "Лутфан ба паёми боло ҷавоб диҳед. Ташаккур!",
         ))
 
 
@@ -1607,9 +1607,9 @@ async def process_arrival_checks(bot: AsyncTeleBot) -> None:
 
         sent = await _safe(bot.send_message(
             check["user_id"],
-            "🔔 <b>Вақти гуфтаатон расид</b>\n\n"
-            f"Мувофиқи дархости <code>#{check['request_id']}</code> Шумо бояд аллакай дар кор бошед.\n\n"
-            "<b>Ба кор расидед?</b>",
+            "🔔 <b>Вақт расид</b>\n\n"
+            f"Мувофиқи дархости <code>#{check['request_id']}</code> шумо бояд ҳозир дар кор бошед.\n\n"
+            "<b>Расидед?</b>",
             reply_markup=kb,
         ))
 

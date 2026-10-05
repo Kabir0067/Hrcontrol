@@ -155,7 +155,7 @@ async def run():
     check("prompt sent to every active employee (not inactive)", sorted(c[1] for c in sent) == [A, B, C, E],
           [c[1] for c in sent])
     check("prompt has att: buttons", all(buttons(c[3])[0].startswith("att:y:") for c in sent))
-    check("prompt text greets and asks", "Шумо ба кор омадед?" in sent[0][2] and "08:30" in sent[0][2])
+    check("prompt text greets and asks", "Рӯз ба хайр" in sent[0][2] and "Ба кор омадед?" in sent[0][2] and "08:30" in sent[0][2])
     await handlers.process_work_attendance(bot)
     check("second tick sends nothing (no duplicates)", not bot.take())
     rec_a = db.get_today_attendance(A)
@@ -343,7 +343,7 @@ async def run():
     at("2026-10-07", "09:31")
     await handlers.send_daily_report(bot)
     rep = texts(bot.take(), "send", GROUP)
-    check("daily report lists later starters", rep and "баъдтар" in rep[0] and "Фирӯза" in rep[0] and "14:00" in rep[0], rep)
+    check("daily report lists later starters", rep and "дертар" in rep[0] and "Фирӯза" in rep[0] and "14:00" in rep[0], rep)
     at("2026-10-07", "13:59")
     await handlers.process_work_attendance(bot)
     check("not asked one minute before own start", F not in [c[1] for c in bot.take() if c[0] == "send"])
