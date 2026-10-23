@@ -603,8 +603,10 @@ function afterDataChange(reload = true) {
 
 /** Сутунҳои қабат-қабат. keys: [{key, color, label}] */
 function stackCols(series, keys, opts = {}) {
-  if (!series || !series.length) return emptyState(opts.empty || 'Маълумот нест', '', ICON.stats);
   const total = (d) => keys.reduce((a, k) => a + (d[k.key] || 0), 0);
+  if (!series || !series.length || !series.some((d) => total(d) > 0)) {
+    return emptyState(opts.empty || 'Маълумот нест', '', ICON.stats);
+  }
   const max = Math.max(1, ...series.map(total));
   const n = series.length;
   const step = n <= 10 ? 1 : n <= 20 ? 2 : n <= 40 ? 5 : n <= 80 ? 10 : 30;
@@ -933,7 +935,7 @@ async function loadHome() {
   $('#home-week-att').innerHTML = stackCols(d.week_attendance, ATT_KEYS, { weekday: true, empty: 'Ҳанӯз давомот нест' });
   const week = d.week_requests || [];
   $('#home-week-note').textContent = `${week.reduce((a, x) => a + x.count, 0)} дархост`;
-  $('#home-week').innerHTML = stackCols(flatTypes(week), TYPE_KEYS, { weekday: true, empty: 'Дархост нест' });
+  $('#home-week').innerHTML = stackCols(flatTypes(week), TYPE_KEYS, { weekday: true, empty: 'Дар 7 рӯзи охир дархост набуд' });
 
   const recent = r.recent || [];
   $('#home-recent').innerHTML = recent.length
