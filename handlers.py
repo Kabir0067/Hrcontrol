@@ -52,7 +52,7 @@ TYPES: dict[str, dict] = {
         "time_word": "дер мекунад",
         "reasons": [
             "Мушкилии нақлиёт",
-            "Роҳбандӣ (пробка)",
+            "Роҳбандӣ",
             "Кори шахсӣ",
             "Аҳволам нағз нест",
             "Ба духтур рафтам",
@@ -76,12 +76,12 @@ TYPES: dict[str, dict] = {
     },
     "at_work_waiting": {
         "emoji": "☕",
-        "self": "Ҷавоб мегирам",
-        "third": "Ҷавоб мепурсад",
+        "self": "Иҷозат мепурсам",
+        "third": "Иҷозат мепурсад",
         "ask_time": True,
         "reason_q": "Барои чӣ меравед? Интихоб кунед ё худатон нависед:",
         "time_q": "Чанд дақиқа лозим аст?",
-        "time_word": "ҷавоб мепурсад",
+        "time_word": "иҷозат мепурсад",
         "reasons": [
             "Кори шахсӣ",
             "Ба банк / идора",
@@ -339,8 +339,8 @@ def _welcome(first_name: str) -> str:
     return (
         f"👋 Салом, <b>{_esc(first_name)}</b>!\n\n"
         "Ин боти кории <b>SoftClub</b> аст.\n"
-        "Агар дер монед, наоед ё ҷавоб пурсед — ҳамин ҷо нависед.\n"
-        "Роҳбарият зуд мебинад ва ҷавобаш ҳам ҳамин ҷо меояд. 👇"
+        "Агар дер монед, наоед ё иҷозат пурсед — ҳамин ҷо нависед.\n"
+        "Роҳбарият зуд хабар мегирад ва ҷавобаш ҳам ҳамин ҷо меояд. 👇"
     )
 
 
@@ -425,23 +425,23 @@ def _help_text() -> str:
         "Ҳар рӯзи корӣ, вақте кор сар мешавад, бот мепурсад: «Ба кор омадед?»\n"
         "• <b>✅ Омадам</b> — вақти омадан қайд мешавад\n"
         "• <b>❌ Наомадам</b> — мегӯед чаро ва кай меоед\n"
-        "Рӯзи якшанбе савол намеояд.\n\n"
+        "Рӯзҳои истироҳат савол намеояд.\n\n"
         "<b>2. Дархост ба роҳбарият</b>\n"
         "«📝 Дархости нав»-ро пахш кунед ва интихоб кунед:\n"
         "🕰 <b>Дер мекунам</b> — каме дертар меоям\n"
         "🌿 <b>Имрӯз намеоям</b> — имрӯз омада наметавонам\n"
-        "☕ <b>Ҷавоб мегирам</b> — бояд каме равам ва баргардам\n"
+        "☕ <b>Иҷозат мепурсам</b> — бояд каме равам ва баргардам\n"
         "🌅 <b>Барвақт меравам</b> — имрӯз пештар меравам\n\n"
         "Сабабро интихоб кунед ё худатон нависед. "
         "Ҷавоби роҳбарият ҳамин ҷо меояд.\n\n"
         "<b>Ёдовариҳо</b>\n"
-        f"• {cfg.REMINDER_LEAD} дақиқа пеш аз тамоми вақт хабар медиҳам\n"
+        f"• {cfg.REMINDER_LEAD} дақиқа пеш аз вақти дархост огоҳ мекунам\n"
         "• Агар «Дер мекунам» фиристед, дар вақти гуфтаатон мепурсам, ки расидед ё не\n\n"
         "<b>Фармонҳо</b>\n"
         "/start — оғоз\n"
-        "/holat — дархостҳои ман\n"
+        "/darkhost — дархостҳои ман\n"
         "/bekor — бекор кардан\n"
-        "/help — ҳамин дастур\n\n"
+        "/kumak — ҳамин дастур\n\n"
         "<i>То ҷавоби роҳбарият дархостро бекор карда метавонед.</i>"
     )
 
@@ -785,11 +785,11 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         db.clear_state(message.from_user.id)
         await show_menu(message.chat.id, message.from_user)
 
-    @bot.message_handler(commands=["help"], func=_private)
+    @bot.message_handler(commands=["help", "kumak"], func=_private)
     async def cmd_help(message: Message):
         await _safe(bot.send_message(message.chat.id, _help_text(), reply_markup=_main_reply_kb()))
 
-    @bot.message_handler(commands=["holat", "status", "my"], func=_private)
+    @bot.message_handler(commands=["darkhost", "holat", "status", "my"], func=_private)
     async def cmd_status(message: Message):
         rows = db.get_user_requests(message.from_user.id, 5)
         await _safe(bot.send_message(message.chat.id, _my_requests_text(rows)))

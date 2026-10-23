@@ -766,7 +766,7 @@ async def handle_backup_download(request: web.Request) -> web.Response:
 # ══════════════════════════════════════════════════════════════════════════
 
 _TYPE_TG = {"late": "Дер мекунад", "absent": "Намеояд",
-            "at_work_waiting": "Ҷавоб мепурсад", "leaving_early": "Барвақт меравад"}
+            "at_work_waiting": "Иҷозат мепурсад", "leaving_early": "Барвақт меравад"}
 _STATUS_TG = {"pending": "Дар интизорӣ", "accepted": "Иҷозат", "rejected": "Рад",
               "cancelled": "Бекор"}
 

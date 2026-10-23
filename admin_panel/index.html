@@ -1,137 +1,193 @@
 <!DOCTYPE html>
 <html lang="tg" data-theme="light">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F6F7F9">
-<meta name="color-scheme" content="light dark">
-<meta name="format-detection" content="telephone=no">
-<meta name="robots" content="noindex, nofollow">
-<title>SoftClub · Панели HR</title>
-<link rel="stylesheet" href="static/style.css?v=__BUILD__">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='26' fill='%234F46E5'/><text y='66' x='50' font-size='46' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>SC</text></svg>">
-<!-- SDK-и Telegram ихтиёрӣ аст: набошад, панел ҳамчун сайти оддӣ кор мекунад -->
-<script defer src="https://telegram.org/js/telegram-web-app.js"></script>
-<script defer src="static/app.js?v=__BUILD__"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#F4F5F2">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // Мавзӯъро пеш аз рангиншавӣ мегузорем — барои пешгирии «чашмаки сафед»
+    (function () {
+      try {
+        var saved = localStorage.getItem('sc_theme');
+        var dark = saved === 'dark' || (!saved && window.matchMedia &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        if (dark) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0B1411');
+        }
+      } catch (e) { }
+    })();
+  </script>
+  <meta name="format-detection" content="telephone=no">
+  <meta name="robots" content="noindex, nofollow">
+  <title>SoftClub · Панели идора</title>
+  <link rel="stylesheet" href="static/style.css?v=__BUILD__">
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%230F2C24'/><path d='M63 34c-4-4-9-6-14-6-9 0-15 4-15 11 0 15 29 8 29 23 0 7-7 12-16 12-6 0-12-2-16-6' fill='none' stroke='%23F1E9D8' stroke-width='7' stroke-linecap='round'/><circle cx='73' cy='28' r='4' fill='%23C9A96A'/></svg>">
+  <!-- SDK-и Telegram ихтиёрӣ аст: набошад, панел ҳамчун сайти оддӣ кор мекунад -->
+  <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script defer src="static/app.js?v=__BUILD__"></script>
 </head>
+
 <body>
 
-<!-- ══════════════ ВУРУД ══════════════ -->
-<section id="login" class="login" hidden>
-  <div class="login__box">
-    <div class="login__brand">
-      <div class="logo logo--lg">SC</div>
-      <h1>SoftClub HR</h1>
-      <p>Давомот ва дархостҳои кормандон</p>
-    </div>
-
-    <div id="login-tg" class="login__tg" hidden>
-      <div class="spinner"></div>
-      <span>Ворид шудан бо Telegram…</span>
-    </div>
-
-    <form id="login-form" class="stack" autocomplete="on" novalidate>
-      <div id="login-error" class="alert alert--danger" hidden></div>
-      <label class="field">
-        <span class="field__label">Логин</span>
-        <input id="in-login" name="username" type="text" autocapitalize="none" autocomplete="username"
-               autocorrect="off" spellcheck="false" required>
-      </label>
-      <label class="field">
-        <span class="field__label">Рамз</span>
-        <span class="field__wrap">
-          <input id="in-pass" name="password" type="password" autocomplete="current-password" required>
-          <button type="button" class="field__eye" data-eye="in-pass" aria-label="Нишон додани рамз">
-            <svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </span>
-      </label>
-      <button type="submit" class="btn btn--primary btn--block btn--lg" id="login-btn">Даромадан</button>
-    </form>
-    <p class="login__foot" id="login-foot">SoftClub HR Control</p>
-  </div>
-</section>
-
-
-<!-- ══════════════ БАРНОМА ══════════════ -->
-<div id="app" class="app" hidden>
-
-  <!-- Менюи паҳлӯ (компютер ва планшет) -->
-  <aside class="side">
-    <div class="side__brand">
-      <div class="logo">SC</div>
-      <div class="side__brand-text"><b>SoftClub HR</b><small>Панели идора</small></div>
-    </div>
-    <nav class="side__nav" id="side-nav"></nav>
-    <div class="side__foot">
-      <button class="side__link" data-action="theme" title="Мавзӯъ">
-        <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg><span>Мавзӯъ</span>
-      </button>
-      <button class="side__link" data-action="logout" title="Баромадан">
-        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span>Баромадан</span>
-      </button>
-    </div>
-  </aside>
-
-  <div class="shell">
-    <header class="topbar">
-      <div class="topbar__title">
-        <div class="logo logo--sm topbar__logo">SC</div>
-        <div class="topbar__text">
-          <h1 id="view-title">Асосӣ</h1>
-          <small id="view-sub"></small>
+  <!-- ══════════════ ВУРУД ══════════════ -->
+  <section id="login" class="login" hidden>
+    <div class="login__shell">
+      <aside class="login__aside">
+        <div class="login__brand">
+          <div class="logo logo--lg">SC</div>
+          <span>SoftClub</span>
         </div>
+        <h2>Ҳар рӯз медонед, ки кӣ дар кор аст.</h2>
+        <p>Давомот, дархостҳо ва омори кормандон — дар як ҷои оддӣ ва фаҳмо.</p>
+        <ul class="login__points">
+          <li><span class="login__point">01</span>Сабти худкори омадан ва дер кардан</li>
+          <li><span class="login__point">02</span>Дархостҳо бо як пахш ҳал мешаванд</li>
+          <li><span class="login__point">03</span>Ҳисобот барои тамоми моҳи корӣ</li>
+        </ul>
+        <div class="login__aside-foot">Панели идораи давомот</div>
+      </aside>
+
+      <div class="login__box">
+        <div class="login__head">
+          <div class="logo logo--md login__logo">SC</div>
+          <h1>Вуруд ба панел</h1>
+          <p>Давомот ва дархостҳои кормандон</p>
+        </div>
+
+        <div id="login-tg" class="login__tg" hidden>
+          <div class="spinner"></div>
+          <span>Ворид шудан бо Telegram…</span>
+        </div>
+
+        <form id="login-form" class="stack" autocomplete="on" novalidate>
+          <div id="login-error" class="alert alert--danger" hidden></div>
+          <label class="field">
+            <span class="field__label">Логин</span>
+            <input id="in-login" name="username" type="text" autocapitalize="none" autocomplete="username"
+              autocorrect="off" spellcheck="false" required>
+          </label>
+          <label class="field">
+            <span class="field__label">Рамз</span>
+            <span class="field__wrap">
+              <input id="in-pass" name="password" type="password" autocomplete="current-password" required>
+              <button type="button" class="field__eye" data-eye="in-pass" aria-label="Нишон додани рамз">
+                <svg viewBox="0 0 24 24">
+                  <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            </span>
+          </label>
+          <button type="submit" class="btn btn--primary btn--block btn--lg" id="login-btn">Даромадан</button>
+        </form>
+        <p class="login__foot" id="login-foot">SoftClub HR Control</p>
       </div>
-      <div class="topbar__actions">
-        <button class="iconbtn" data-action="refresh" aria-label="Навсозӣ" title="Навсозӣ">
-          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
-        </button>
-        <button class="iconbtn topbar__settings" data-view-btn="settings" aria-label="Танзимот" title="Танзимот">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
-        </button>
+    </div>
+  </section>
+
+
+  <!-- ══════════════ БАРНОМА ══════════════ -->
+  <div id="app" class="app" hidden>
+
+    <!-- Менюи паҳлӯ (компютер ва планшет) -->
+    <aside class="side">
+      <div class="side__brand">
+        <div class="logo">SC</div>
+        <div class="side__brand-text"><b>SoftClub</b><small>Панели идора</small></div>
       </div>
-    </header>
+      <nav class="side__nav" id="side-nav" aria-label="Бахшҳо"></nav>
+      <div class="side__foot">
+        <button class="side__link" data-action="theme" title="Иваз кардани мавзӯъ">
+          <svg viewBox="0 0 24 24">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+          </svg><span>Мавзӯъ</span>
+        </button>
+        <button class="side__link" data-action="logout" title="Баромадан">
+          <svg viewBox="0 0 24 24">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <path d="m16 17 5-5-5-5" />
+            <path d="M21 12H9" />
+          </svg><span>Баромадан</span>
+        </button>
+        <div class="side__meta" id="side-meta">SoftClub HR</div>
+      </div>
+    </aside>
 
-    <main class="main" id="main">
-      <section class="view" id="view-home"></section>
-      <section class="view" id="view-att"></section>
-      <section class="view" id="view-req"></section>
-      <section class="view" id="view-team"></section>
-      <section class="view" id="view-stats"></section>
-      <section class="view" id="view-settings"></section>
-    </main>
+    <div class="shell">
+      <header class="topbar">
+        <div class="topbar__title">
+          <div class="logo logo--sm topbar__logo">SC</div>
+          <div class="topbar__text">
+            <h1 id="view-title">Асосӣ</h1>
+            <small id="view-sub"></small>
+          </div>
+        </div>
+        <div class="topbar__actions">
+          <button class="iconbtn" data-action="refresh" aria-label="Навсозӣ" title="Навсозӣ">
+            <svg viewBox="0 0 24 24">
+              <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+              <path d="M21 3v6h-6" />
+            </svg>
+          </button>
+          <button class="iconbtn topbar__settings" data-view-btn="settings" aria-label="Танзимот" title="Танзимот">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="main" id="main">
+        <section class="view" id="view-home"></section>
+        <section class="view" id="view-att"></section>
+        <section class="view" id="view-req"></section>
+        <section class="view" id="view-team"></section>
+        <section class="view" id="view-stats"></section>
+        <section class="view" id="view-settings"></section>
+      </main>
+    </div>
+
+    <!-- Менюи поён (телефон) -->
+    <nav class="tabbar" id="tabbar" aria-label="Бахшҳо"></nav>
+
+    <!-- Панели амалҳо ҳангоми интихоб -->
+    <div class="selbar" id="selbar" hidden>
+      <button class="btn btn--ghost btn--sm" data-action="sel-cancel">Бекор</button>
+      <span class="selbar__count" id="sel-count">0 интихоб</span>
+      <button class="btn btn--ghost btn--sm" data-action="sel-all">Ҳама</button>
+      <button class="btn btn--danger btn--sm" data-action="sel-delete">Нест кардан</button>
+    </div>
   </div>
 
-  <!-- Менюи поён (телефон) -->
-  <nav class="tabbar" id="tabbar"></nav>
 
-  <!-- Панели амалҳо ҳангоми интихоб -->
-  <div class="selbar" id="selbar" hidden>
-    <button class="btn btn--ghost btn--sm" data-action="sel-cancel">Бекор</button>
-    <span class="selbar__count" id="sel-count">0 интихоб</span>
-    <button class="btn btn--ghost btn--sm" data-action="sel-all">Ҳама</button>
-    <button class="btn btn--danger btn--sm" data-action="sel-delete">Нест кардан</button>
+  <!-- ══════════════ SHEET (тафсилот / тасдиқ) ══════════════ -->
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet__scrim" data-close></div>
+    <div class="sheet__panel" role="dialog" aria-modal="true">
+      <div class="sheet__grip" data-close></div>
+      <button class="sheet__x iconbtn" data-close aria-label="Пӯшидан">
+        <svg viewBox="0 0 24 24">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      </button>
+      <div class="sheet__body" id="sheet-body"></div>
+    </div>
   </div>
-</div>
 
-
-<!-- ══════════════ SHEET (тафсилот / тасдиқ) ══════════════ -->
-<div class="sheet" id="sheet" hidden>
-  <div class="sheet__scrim" data-close></div>
-  <div class="sheet__panel" role="dialog" aria-modal="true">
-    <div class="sheet__grip" data-close></div>
-    <button class="sheet__x iconbtn" data-close aria-label="Пӯшидан">
-      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
-    </button>
-    <div class="sheet__body" id="sheet-body"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+    <span id="toast-text"></span>
+    <button class="toast__action" id="toast-action" hidden></button>
   </div>
-</div>
 
-<div class="toast" id="toast" role="status" aria-live="polite" hidden>
-  <span id="toast-text"></span>
-  <button class="toast__action" id="toast-action" hidden></button>
-</div>
-
-<noscript><p style="padding:24px;font-family:sans-serif">Барои кор бо панел JavaScript-ро фаъол кунед.</p></noscript>
+  <noscript>
+    <p style="padding:24px;font-family:sans-serif">Барои кор бо панел JavaScript-ро фаъол кунед.</p>
+  </noscript>
 </body>
+
 </html>

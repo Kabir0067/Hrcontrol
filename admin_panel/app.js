@@ -49,6 +49,8 @@ const ICON = {
   bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9Z"/></svg>',
   alert: '<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>',
   lock: '<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+  eye: '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 5.2A10.9 10.9 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3M6.6 6.7A17.4 17.4 0 0 0 2 12s3.6 7 10 7a10.7 10.7 0 0 0 4.2-.8"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
   left: '<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
   edit: '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
@@ -60,10 +62,10 @@ const ICON = {
 /* ══════════════ Луғатҳо ══════════════ */
 
 const TYPE = {
-  late:            { label: 'Дер мекунад',     short: 'Дер',     color: 'var(--warn)',   pill: 'warn',   emoji: '🕰' },
-  absent:          { label: 'Намеояд',         short: 'Намеояд', color: 'var(--danger)', pill: 'danger', emoji: '🌿' },
-  at_work_waiting: { label: 'Ҷавоб мепурсад',  short: 'Ҷавоб',   color: 'var(--info)',   pill: 'info',   emoji: '☕' },
-  leaving_early:   { label: 'Барвақт меравад', short: 'Барвақт', color: 'var(--violet)', pill: 'violet', emoji: '🌅' },
+  late:            { label: 'Дер меояд',        short: 'Дер',     color: 'var(--warn)',   pill: 'warn' },
+  absent:          { label: 'Намеояд',         short: 'Намеояд', color: 'var(--danger)', pill: 'danger' },
+  at_work_waiting: { label: 'Иҷозат мепурсад', short: 'Иҷозат',  color: 'var(--info)',   pill: 'info' },
+  leaving_early:   { label: 'Барвақт меравад', short: 'Барвақт', color: 'var(--violet)', pill: 'violet' },
 };
 const TYPE_ORDER = ['late', 'absent', 'at_work_waiting', 'leaving_early'];
 
@@ -94,11 +96,11 @@ const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const VIEWS = [
   { id: 'home',     label: 'Асосӣ',     sub: 'Ҳолати имрӯз' },
-  { id: 'att',      label: 'Давомот',   sub: 'Кӣ кай ба кор омад' },
+  { id: 'att',      label: 'Давомот',   sub: 'Ҳозирӣ ва дерӣ' },
   { id: 'req',      label: 'Дархостҳо', sub: 'Дархостҳои кормандон' },
   { id: 'team',     label: 'Кормандон', sub: 'Ҳамаи кормандон' },
   { id: 'stats',    label: 'Омор',      sub: 'Рақамҳо ва хулосаҳо' },
-  { id: 'settings', label: 'Танзимот',  sub: 'Вақти кор, рамз, база', noTab: true },
+  { id: 'settings', label: 'Танзимот',  sub: 'Вақти кор, амният ва нусхаҳо', noTab: true },
 ];
 
 const PERIODS = [
@@ -159,7 +161,7 @@ function preferredTheme() {
 
 function applyTheme(name) {
   document.documentElement.dataset.theme = name;
-  const color = name === 'dark' ? '#0B0F17' : '#F6F7F9';
+  const color = name === 'dark' ? '#0B1411' : '#F4F5F2';
   const meta = $('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', color);
   if (tg) {
@@ -188,7 +190,7 @@ function initials(full) {
   return (parts.slice(0, 2).map((p) => p[0]).join('') || '?').toUpperCase();
 }
 
-const AV_COLORS = ['#4F46E5', '#7C3AED', '#DB2777', '#EA580C', '#059669', '#0891B2', '#CA8A04', '#DC2626', '#2563EB', '#9333EA', '#0D9488', '#65A30D'];
+const AV_COLORS = ['#2F6E60', '#446A8C', '#6B5A87', '#8A6046', '#9A7B3E', '#4E724F', '#8A5966', '#3E5D78', '#6B7045', '#567181', '#74564B', '#4A6560'];
 function avatar(name, id, cls = '') {
   const n = Math.abs(Number(id) || [...String(name)].reduce((a, c) => a + c.charCodeAt(0), 0));
   return `<div class="avatar ${cls}" style="background:${AV_COLORS[n % AV_COLORS.length]}">${esc(initials(name))}</div>`;
@@ -227,6 +229,13 @@ function fmtRelative(v) {
   if (ymd(d) === addDays(t, -1)) return `дирӯз, ${fmtClock(v)}`;
   const sameYear = d.getFullYear() === now.getFullYear();
   return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}${sameYear ? '' : ' ' + d.getFullYear()}, ${fmtClock(v)}`;
+}
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} КБ`;
+  return `${(n / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 function fmtMinutes(m) {
@@ -272,7 +281,7 @@ function debounce(fn, ms) {
 }
 
 const pill = (text, kind = '', icon = '') => `<span class="pill ${kind ? 'pill--' + kind : ''}">${icon}${esc(text)}</span>`;
-function typePill(t) { const m = TYPE[t] || { label: t, pill: '' }; return pill(`${m.emoji || ''} ${m.label}`, m.pill); }
+function typePill(t) { const m = TYPE[t] || { label: t, pill: '' }; return pill(m.label, m.pill); }
 function statusPill(s) { const m = STATUS[s] || { label: s, pill: '' }; return pill(m.label, m.pill); }
 function attPill(s) { const m = ATT[s] || ATT.none; return `<span class="pill pill--${m.pill}"><i class="dot" style="background:${m.color}"></i>${esc(m.label)}</span>`; }
 
@@ -435,7 +444,7 @@ function deferDelete(key, { text, apply, revert, commit, done }) {
     clearTimeout(entry.timer);
     pendingDeletes.delete(key);
     const ok = await commit();
-    if (!ok) { revert(); toast('Нест нашуд — аз нав кӯшиш кунед', 'danger'); return; }
+    if (!ok) { revert(); toast('Нест карда нашуд — аз нав кӯшиш кунед', 'danger'); return; }
     if (done) done();
   };
   entry.undo = () => {
@@ -633,7 +642,7 @@ function simpleCols(values, labels, colors, opts = {}) {
       <div class="col__bar" style="height:${h}%"><i style="height:100%;background:${color}"></i></div></div>`;
   }).join('');
   return `<div class="cols" style="height:${opts.height || 150}px">${cols}</div>
-    <div class="axis">${labels.map((l) => `<span>${esc(l)}</span>`).join('')}</div>`;
+    <div class="axis${labels.length > 8 ? ' axis--dense' : ''}">${labels.map((l) => `<span>${esc(l)}</span>`).join('')}</div>`;
 }
 
 function donut(segments, centerValue, centerLabel) {
@@ -809,16 +818,13 @@ async function loadHome() {
   const root = $('#view-home');
   if (!root.dataset.built) {
     root.innerHTML = `
-      <div class="hello" id="home-hello"></div>
       <div id="home-schedule"></div>
-      <div class="grid grid-21">
+      <div class="kpis" id="home-kpis">${skel(4, 'skeleton--sm')}</div>
+      <div class="grid grid-21 grid--start">
         <div class="card" id="home-today">${skel(1, 'skeleton--lg')}</div>
-        <div class="stack">
-          <div class="kpis kpis--2" id="home-kpis">${skel(4, 'skeleton--sm')}</div>
-          <div class="card">
-            <div class="card__head"><h2>Давомот · 7 рӯз</h2></div>
-            <div class="card__body" id="home-week-att">${skel(1)}</div>
-          </div>
+        <div class="card">
+          <div class="card__head"><h2>Давомот · 7 рӯз</h2><span class="card__note">ҳар рӯз</span></div>
+          <div class="card__body" id="home-week-att">${skel(1)}</div>
         </div>
       </div>
       <div class="grid grid-21 grid--start">
@@ -864,7 +870,6 @@ async function loadHome() {
   const hour = new Date().getHours();
   const hello = hour < 18 ? 'Рӯз ба хайр' : 'Шом ба хайр';
   // Салом дар худи сарлавҳа — бе блоки такрорӣ
-  $('#home-hello').innerHTML = '';
   if (S.view === 'home') {
     $('#view-title').textContent = `${hello}!`;
     $('#view-sub').textContent = `${cap(fmtDay(day.date))}${S.schedule.enabled ? ` · кор аз ${S.schedule.time}` : ''}`;
@@ -968,7 +973,7 @@ async function openSchedule() {
   openSheet(`
     <div class="sheet__title">Вақти корӣ</div>
     <p class="sheet__text">Дар ин вақт бот аз ҳар корманд мепурсад: <b>«Ба кор омадед?»</b>
-      Ҷавобҳо ба ҷадвал меафтанд. Касе ки наомад, мегӯяд чаро ва кай меояд.</p>
+      Ҷавобҳо дар ҷадвали давомот сабт мешаванд. Касе ки наомад, сабаб ва вақти омаданашро менависад.</p>
     <label class="field"><span class="field__label">Оғози кор</span>
       <input id="sc-time" class="input" type="time" value="${esc(sch.time || '08:00')}" required></label>
     <div class="field"><span class="field__label">Рӯзҳои корӣ</span>
@@ -1156,8 +1161,8 @@ function renderAttDay() {
     });
 
   let banner = '';
-  if (d.off) banner = `<div class="alert alert--info">🌴 <b>${esc(d.off || 'Рӯзи истироҳат')}</b> — дар ин рӯз савол намеравад.</div>`;
-  else if (d.weekend && !d.anyone_works) banner = `<div class="alert alert--info">🌴 ${cap(WD_FULL[d.wd])} — рӯзи истироҳат. Бот савол намефиристад.</div>`;
+  if (d.off) banner = `<div class="alert alert--info"><b>${esc(d.off || 'Рӯзи истироҳат')}</b> — дар ин рӯз савол намеравад.</div>`;
+  else if (d.weekend && !d.anyone_works) banner = `<div class="alert alert--info">${cap(WD_FULL[d.wd])} — рӯзи истироҳат. Бот савол намефиристад.</div>`;
 
   const rows = list.map(({ it, i }) => {
     const c = it.cell;
@@ -1191,7 +1196,7 @@ function renderAttDay() {
     <div class="chips">${filters.map(([k, l, n]) => `<button class="chip${st.filter === k ? ' is-active' : ''}" data-filter="${k}">${k ? `<i class="dot" style="background:${ATT[k].color}"></i>` : ''}${esc(l)} <b>${n}</b></button>`).join('')}</div>
     <div class="card"><div class="list">${rows || emptyState(sm.total ? 'Дар ин гурӯҳ касе нест' : 'Кормандон ҳоло нестанд', sm.total ? '' : 'Корманд вақте дар бот /start-ро пахш кунад, ин ҷо пайдо мешавад', ICON.team)}</div></div>
     ${canOff ? `<div class="row-flex" style="justify-content:center">
-      <button class="btn btn--link" data-dayoff="${d.date}" data-off="${d.off ? '0' : '1'}">${d.off ? 'Ин рӯзро рӯзи корӣ кардан' : 'Ин рӯзро ид (рӯзи истироҳат) кардан'}</button></div>` : ''}`;
+      <button class="btn btn--ghost btn--sm" data-dayoff="${d.date}" data-off="${d.off ? '0' : '1'}">${ICON.palm}<span>${d.off ? 'Рӯзи корӣ эълон кардан' : 'Рӯзи истироҳат эълон кардан'}</span></button></div>` : ''}`;
 }
 
 async function toggleDayOff(date, off) {
@@ -1252,6 +1257,7 @@ function renderAttMonth() {
     <span><i style="background:var(--danger-soft);box-shadow:inset 0 0 0 1px var(--danger)"></i>Н — наомад</span>
     <span><i style="background:var(--info-soft);box-shadow:inset 0 0 0 1px var(--info)"></i>Р — рухсатӣ</span>
     <span><i style="box-shadow:inset 0 0 0 1.5px var(--border-2)"></i>? — ҷавоб надод</span>
+    <span><i style="background:var(--surface-3);box-shadow:inset 0 0 0 1px var(--border-2)"></i>Бе сабт</span>
     <span><i style="background-image:repeating-linear-gradient(135deg,transparent 0 3px,var(--border-2) 3px 4px)"></i>Истироҳат</span></div>`;
 
   const head = `<tr><th class="m-name">Корманд</th>${d.days.map((day) => `<th class="m-day${day.workday ? '' : ' is-off'}${day.today ? ' is-today' : ''}" title="${esc(fmtDay(day.date) + (day.off ? ' · ' + day.off : ''))}"><button class="m-person" style="display:block;text-align:center;color:inherit" data-goday="${day.date}"><b>${Number(day.date.slice(8))}</b><small>${WD[day.wd]}</small></button></th>`).join('')}
@@ -1264,18 +1270,24 @@ function renderAttMonth() {
     <td class="m-sum" style="color:${e.summary.absent ? 'var(--danger-text)' : 'inherit'}">${e.summary.absent}<small>${e.summary.pending ? e.summary.pending + ' бе ҷавоб' : ''}</small></td></tr>`).join('');
   const foot = `<tr><td class="m-name">Омаданд</td>${d.days.map((day) => { const b = d.by_day[day.date] || {}; const n = (b.on_time || 0) + (b.late || 0); return `<td>${n || ''}</td>`; }).join('')}<td></td><td></td><td></td></tr>`;
 
+  const stripAxis = d.days.map((day, i) => {
+    const n = Number(day.date.slice(8));
+    const show = i === 0 || i === d.days.length - 1 || n % 5 === 0;
+    return `<span>${show ? n : ''}</span>`;
+  }).join('');
   const cards = emps.map((e) => `
     <button class="person" data-uid="${e.user_id}">
       <div class="person__head">${avatar(e.name, e.user_id, e.active ? '' : 'is-off')}
         <div class="person__who"><b>${esc(shortName(e.name))}</b><small>${e.custom ? `Кор аз ${esc(e.start)} · ` : ''}${e.summary.avg_arrival ? 'миёнаи омадан ' + e.summary.avg_arrival : (e.active ? 'ҳанӯз сабт нест' : 'савол намегирад')}</small></div>
         <div class="person__score"><b>${pctText(e.summary.rate)}</b><small>давомот</small></div></div>
       <div class="strip">${d.days.map((day) => { const c = e.cells[day.date]; const s = c ? c.s : day.future ? 'future' : !empWorks(e, day) ? 'off' : 'none'; return `<i class="s-${s}${day.today ? ' is-today' : ''}"></i>`; }).join('')}</div>
+      <div class="strip-axis">${stripAxis}</div>
       <div class="person__nums">${pill(`Сари вақт ${e.summary.on_time}`, 'ok')}${e.summary.late ? pill(`Дер ${e.summary.late} · ${fmtHours(e.summary.late_minutes)}`, 'warn') : ''}${e.summary.absent ? pill(`Наомад ${e.summary.absent}`, 'danger') : ''}${e.summary.leave ? pill(`Рухсатӣ ${e.summary.leave}`, 'info') : ''}${e.summary.pending ? pill(`Бе ҷавоб ${e.summary.pending}`, 'muted') : ''}</div>
     </button>`).join('');
 
   $('#att-body').innerHTML = `
     <div class="kpis">
-      ${kpi('Давомот', pctText(t.rate), `${t.present} рӯз омаданд`, ICON.att, 'ok')}
+      ${kpi('Давомот', pctText(t.rate), `${t.present} рӯз ҳозир буданд`, ICON.att, 'ok')}
       ${kpi('Сари вақт', pctText(t.punctuality), `${t.on_time} сари вақт · ${t.late} дер`, ICON.check, 'brand')}
       ${kpi('Миёнаи омадан', t.avg_arrival || '—', S.schedule && S.schedule.enabled ? `оғози кор ${S.schedule.time}` : '', ICON.clock, 'info')}
       ${kpi('Ҳамагӣ дерӣ', fmtHours(t.late_minutes), t.late ? `${t.late} бор дер омаданд` : 'касе дер накард', ICON.hourglass, 'warn')}
@@ -1418,7 +1430,7 @@ async function initRequests() {
         </div>
         <div class="filters__row">
           ${periodPicker('req', st)}
-          <select class="select" id="rq-type" aria-label="Навъ"><option value="">Ҳама навъҳо</option>${TYPE_ORDER.map((t) => `<option value="${t}">${TYPE[t].emoji} ${TYPE[t].label}</option>`).join('')}</select>
+          <select class="select" id="rq-type" aria-label="Навъ"><option value="">Ҳама навъҳо</option>${TYPE_ORDER.map((t) => `<option value="${t}">${TYPE[t].label}</option>`).join('')}</select>
           <select class="select" id="rq-status" aria-label="Ҳолат"><option value="">Ҳама ҳолатҳо</option>${STATUS_ORDER.map((s) => `<option value="${s}">${STATUS[s].label}</option>`).join('')}</select>
           <select class="select" id="rq-user" aria-label="Корманд"><option value="">Ҳама кормандон</option></select>
           <select class="select" id="rq-sort" aria-label="Тартиб">
@@ -1654,8 +1666,8 @@ function initTeam() {
           </select>
         </div>
       </div>
-      <div class="resultbar"><span id="tm-count"></span><span class="muted small">${esc(`давомот: ${rangeText(workMonth(0).start, workMonth(0).end)}`)}</span></div>
-      <div class="card"><div class="list" id="tm-list">${skel(4)}</div></div>
+      <div class="resultbar"><span id="tm-count"></span><span class="muted small">${esc(rangeText(workMonth(0).start, workMonth(0).end))}</span></div>
+      <div class="team-grid" id="tm-list">${skel(4)}</div>
       <p class="hint-line">Корманди нав худаш пайдо мешавад, вақте дар бот /start-ро пахш кунад. Барои роҳбарон дар профил «Саволи ҳаррӯза»-ро хомӯш кунед.</p>`;
     root.dataset.built = '1';
     $('#tm-q').addEventListener('input', debounce((e) => { st.q = e.target.value.trim().toLowerCase(); renderTeam(); }, 200));
@@ -1699,19 +1711,24 @@ function renderTeam() {
   $('#tm-count').innerHTML = `<b>${counts.active}</b> фаъол${counts.off ? ` · ${counts.off} хомӯш` : ''}`;
   $('#tm-list').innerHTML = rows.length ? rows.map((w) => {
     const m = w.month;
-    return `<button class="person" data-uid="${w.user_id}">
-      <div class="person__head">${avatar(w.display, w.user_id, w.active ? '' : 'is-off')}
-        <div class="person__who"><b>${esc(w.alias || shortName(w.display))}</b>
-          <small>${w.username ? '@' + esc(w.username) + ' · ' : ''}охирин бор: ${esc(fmtRelative(w.last_seen))}</small></div>
-        <div class="person__score"><b>${pctText(m.rate)}</b><small>давомот</small></div></div>
-      <div class="person__nums">
+    const rate = m.rate == null ? null : Math.max(0, Math.min(100, m.rate));
+    return `<button class="team-card" data-uid="${w.user_id}">
+      <div class="team-card__top">${avatar(w.display, w.user_id, w.active ? '' : 'is-off')}
+        <div class="team-card__who"><b>${esc(w.alias || shortName(w.display))}</b>
+          <small>${w.username ? '@' + esc(w.username) : 'дар бот'} · ${esc(fmtRelative(w.last_seen))}</small></div>
+        <span class="team-card__chev">${ICON.right}</span></div>
+      <div class="team-card__score">
+        <div class="team-card__rate"><b>${pctText(m.rate)}</b><small>давомот дар моҳ</small></div>
+        <span class="meter"><i style="width:${rate || 0}%;background:${rate == null ? 'var(--border-2)' : rate >= 90 ? 'var(--ok)' : rate >= 70 ? 'var(--warn)' : 'var(--danger)'}"></i></span>
+      </div>
+      <div class="team-card__tags">
         ${w.active ? '' : pill('Савол намегирад', 'muted')}
-        ${w.active && w.schedule && w.schedule.custom ? pill(`🕑 ${w.schedule.time}${w.schedule.custom_days ? ' · ' + daysText(w.schedule.days) : ''}`, 'violet') : ''}
-        ${m.present ? pill(`Омад ${m.present}`, 'ok') : ''}
+        ${w.active && w.schedule && w.schedule.custom ? pill(`${w.schedule.time}${w.schedule.custom_days ? ' · ' + daysText(w.schedule.days) : ''}`, 'violet') : ''}
+        ${m.present ? pill(`Ҳозирӣ ${m.present}`, 'ok') : ''}
         ${m.late ? pill(`Дер ${m.late}`, 'warn') : ''}
         ${m.absent ? pill(`Наомад ${m.absent}`, 'danger') : ''}
         ${w.requests ? pill(`Дархост ${w.requests}`, 'brand') : ''}
-        ${w.pending ? pill(`${w.pending} интизори қарор`, 'warn') : ''}
+        ${w.pending ? pill(`${w.pending} интизор`, 'warn') : ''}
         ${!m.days && !w.requests && w.active ? '<span class="muted small">Ҳанӯз маълумот нест</span>' : ''}
       </div></button>`;
   }).join('')
@@ -1745,7 +1762,7 @@ async function openEmployee(uid, period = '') {
     }).join('');
 
   const typeRows = TYPE_ORDER.map((t) => ({
-    label: `${TYPE[t].emoji} ${TYPE[t].label}`, value: d.by_type[t].count, color: TYPE[t].color,
+    label: TYPE[t].label, value: d.by_type[t].count, color: TYPE[t].color,
     extra: d.by_type[t].minutes ? fmtHours(d.by_type[t].minutes) : '',
   }));
 
@@ -2020,11 +2037,11 @@ function renderAttStats(a) {
   const wl = a.weekday_late;
   const wlMax = Math.max(...wl);
   const insights = [
-    s.rate != null ? `Давомоти умумӣ: <b>${s.rate}%</b> — аз ${s.present + s.absent + s.pending} рӯзи пурсидашуда ${s.present} рӯз омаданд` : '',
-    s.punctuality != null ? `Сари вақт омаданд: <b>${s.punctuality}%</b>. Дер — ${s.late} бор (ҳамагӣ ${fmtHours(s.late_minutes)})` : '',
-    best ? `Аз ҳама бонизомтар: <b>${esc(shortName(best.name))}</b> — ${pctText(best.punctuality)} сари вақт` : '',
-    worstLate && worstLate.late_minutes ? `Бештар дер кардааст: <b>${esc(shortName(worstLate.name))}</b> — ${worstLate.late} бор, ${fmtHours(worstLate.late_minutes)}` : '',
-    worstAbs && worstAbs.absent ? `Бештар наомадааст: <b>${esc(shortName(worstAbs.name))}</b> — ${worstAbs.absent} рӯз` : '',
+    s.rate != null ? `Ҳозирӣ: <b>${s.rate}%</b> — ${s.present} рӯз аз ${s.present + s.absent + s.pending} рӯзи пурсидашуда` : '',
+    s.punctuality != null ? `Сари вақт: <b>${s.punctuality}%</b> · дер: ${s.late} бор (${fmtHours(s.late_minutes)})` : '',
+    best ? `Беҳтарин сари вақт: <b>${esc(shortName(best.name))}</b> — ${pctText(best.punctuality)}` : '',
+    worstLate && worstLate.late_minutes ? `Бештар дер: <b>${esc(shortName(worstLate.name))}</b> — ${worstLate.late} бор, ${fmtHours(worstLate.late_minutes)}` : '',
+    worstAbs && worstAbs.absent ? `Бештар наомад: <b>${esc(shortName(worstAbs.name))}</b> — ${worstAbs.absent} рӯз` : '',
     wlMax ? `Бештар рӯзи <b>${WD_FULL[wl.indexOf(wlMax)]}</b> дер меоянд (${wlMax} бор)` : '',
     s.pending ? `${s.pending} бор ба саволи бот ҷавоб надоданд` : '',
   ].filter(Boolean);
@@ -2045,10 +2062,10 @@ function renderAttStats(a) {
 
   body.innerHTML = `
     <div class="kpis">
-      ${kpi('Давомот', pctText(s.rate), `${s.present} рӯз омаданд`, ICON.att, 'ok')}
+      ${kpi('Давомот', pctText(s.rate), `${s.present} рӯз ҳозир буданд`, ICON.att, 'ok')}
       ${kpi('Сари вақт', pctText(s.punctuality), `${s.on_time} сари вақт · ${s.late} дер`, ICON.check, 'brand')}
       ${kpi('Миёнаи омадан', s.avg_arrival || '—', a.schedule.enabled ? `оғози кор ${a.schedule.time}` : '', ICON.clock, 'info')}
-      ${kpi('Ҳамагӣ дерӣ', fmtHours(s.late_minutes), `${s.absent} наомад · ${s.leave} рухсатӣ`, ICON.hourglass, 'warn')}
+      ${kpi('Ҳамагӣ дерӣ', fmtHours(s.late_minutes), s.late ? `миёна ${fmtMinutes(Math.max(1, Math.round(s.late_minutes / s.late)))}` : 'ҳеҷ кас дер накард', ICON.hourglass, 'warn')}
     </div>
     ${insights.length ? `<div class="card"><div class="card__head"><h2>Хулосаҳо</h2></div>
       <div class="card__body"><div class="insights">${insights.map((t) => `<div class="insight">${ICON.bulb}<span>${t}</span></div>`).join('')}</div></div></div>` : ''}
@@ -2057,7 +2074,7 @@ function renderAttStats(a) {
     <div class="grid grid-2">
       <div class="card"><div class="card__head"><h2>Вақти омадан</h2><span class="card__note">${!h.start ? `дақиқа нисбат ба оғози кори ҳар кас · сари вақт то +${h.grace}` : a.schedule.enabled ? `оғози кор ${esc(h.start)} · сари вақт — то ${esc(addMin(h.start, h.grace))}` : ''}</span></div>
         <div class="card__body">${h.values.some(Boolean) ? simpleCols(h.values, histLabels, histColors, { highlight: zeroIdx, height: 160 }) : emptyState('Ҳанӯз вақти омадан сабт нашудааст')}</div></div>
-      <div class="card"><div class="card__head"><h2>Дер омадан аз рӯи рӯзҳои ҳафта</h2></div>
+      <div class="card"><div class="card__head"><h2>Деркунӣ аз рӯи рӯзҳои ҳафта</h2></div>
         <div class="card__body">${wlMax ? simpleCols(wl, WD, 'var(--warn)', { highlight: wl.indexOf(wlMax), height: 160 }) : emptyState('Касе дер накардааст', '', ICON.check)}</div></div>
     </div>
     <div class="card"><div class="card__head"><h2>Кормандон</h2><span class="card__note">барои тартиб сарлавҳаро пахш кунед</span></div>
@@ -2087,14 +2104,15 @@ function renderReqStats(d) {
   const hMax = d.hours.indexOf(Math.max(...d.hours));
   const topWorker = d.workers[0];
   const lateLeader = d.workers.slice().sort((a, b) => b.late_minutes - a.late_minutes)[0];
+  const avgLate = bt.late && bt.late.count ? Math.round(s.late_minutes / bt.late.count) : 0;
 
   const insights = [
-    `Бештар — <b>${TYPE[topType].label.toLowerCase()}</b>: ${bt[topType].count} дархост (${pct(bt[topType].count, s.total)}%)`,
+    `Навъи маъмултарин: <b>${TYPE[topType].label}</b> — ${bt[topType].count} дархост (${pct(bt[topType].count, s.total)}%)`,
     d.reasons[0] ? `Сабаби маъмултарин: <b>${esc(d.reasons[0].reason)}</b> — ${d.reasons[0].count} бор` : '',
     Math.max(...d.weekday) ? `Бештар рӯзи <b>${WD_FULL[wdMax]}</b> дархост мефиристанд (${d.weekday[wdMax]})` : '',
-    Math.max(...d.hours) ? `Вақти серкортарин: <b>${p2(hMax)}:00–${p2(hMax + 1)}:00</b>` : '',
+    Math.max(...d.hours) ? `Бештар соати <b>${p2(hMax)}:00–${p2(hMax + 1)}:00</b> дархост мефиристанд (${d.hours[hMax]})` : '',
     topWorker ? `Бештар дархост: <b>${esc(shortName(topWorker.name))}</b> — ${topWorker.total}` : '',
-    lateLeader && lateLeader.late_minutes ? `Бештар «дер мекунам»: <b>${esc(shortName(lateLeader.name))}</b> — ${fmtHours(lateLeader.late_minutes)}` : '',
+    lateLeader && lateLeader.late_minutes ? `Бештар дер кардааст: <b>${esc(shortName(lateLeader.name))}</b> — ${fmtHours(lateLeader.late_minutes)}` : '',
   ].filter(Boolean);
 
   const statusItems = STATUS_ORDER.map((k) => ({
@@ -2104,7 +2122,7 @@ function renderReqStats(d) {
     <button class="person" data-uid="${w.user_id}">
       <div class="person__head"><span class="muted" style="width:18px;text-align:center;font-weight:700">${i + 1}</span>${avatar(w.name, w.user_id, 'avatar--sm')}
         <div class="person__who"><b>${esc(shortName(w.name))}</b>
-          <small>Дер ${w.late} · Намеояд ${w.absent} · Ҷавоб ${w.at_work_waiting} · Барвақт ${w.leaving_early}</small></div>
+          <small>Дер ${w.late} · Намеояд ${w.absent} · ${TYPE.at_work_waiting.short} ${w.at_work_waiting} · Барвақт ${w.leaving_early}</small></div>
         <div class="person__score"><b>${w.total}</b><small>${w.late_minutes ? fmtHours(w.late_minutes) : 'дархост'}</small></div></div>
       ${typeStackbar({ late: w.late, absent: w.absent, at_work_waiting: w.at_work_waiting, leaving_early: w.leaving_early })}
     </button>`).join('');
@@ -2121,7 +2139,7 @@ function renderReqStats(d) {
       ${kpi('Ҳамагӣ дархост', s.total, `${s.people} корманд`, ICON.req, 'brand')}
       ${kpi('Иҷозат гирифтанд', pctText(s.accept_rate), `${s.accepted} иҷозат · ${s.rejected} рад`, ICON.percent, 'ok')}
       ${kpi('Вақти миёнаи ҷавоб', s.avg_response_min != null ? fmtMinutes(Math.max(1, s.avg_response_min)) : '—', 'аз дархост то қарор', ICON.bolt, 'violet')}
-      ${kpi('Вақти «дер мекунам»', fmtHours(s.late_minutes), `миёна ${s.avg_minutes ? fmtMinutes(s.avg_minutes) : '—'} дар як дархост`, ICON.clock, 'warn')}
+      ${kpi('Ҳамагӣ дерӣ', fmtHours(s.late_minutes), avgLate ? `миёна ${fmtMinutes(avgLate)}` : 'ҳеҷ кас дер накард', ICON.hourglass, 'warn')}
     </div>
     <div class="card"><div class="card__head"><h2>Хулосаҳо</h2></div>
       <div class="card__body"><div class="insights">${insights.map((t) => `<div class="insight">${ICON.bulb}<span>${t}</span></div>`).join('')}</div></div></div>
@@ -2159,128 +2177,139 @@ async function initSettings() {
   S.inited.settings = true;
   const root = $('#view-settings');
   root.innerHTML = skel(3);
-  const [acc, health, backups, sch] = await Promise.all([
-    api('/api/account'), api('/api/health', { quiet: true }), api('/api/backups', { quiet: true }), api('/api/work-schedule', { quiet: true }),
-  ]);
-  if (!acc) return;
-  if (sch) S.schedule = sch;
-  const theme = document.documentElement.dataset.theme;
-  const poll = health && health.polling;
-  const upD = health ? Math.floor(health.uptime / 86400) : 0;
-  const upH = health ? Math.floor((health.uptime % 86400) / 3600) : 0;
-  const upM = health ? Math.floor((health.uptime % 3600) / 60) : 0;
-  const uptime = upD ? `${upD} рӯз ${upH} соат` : `${upH} соат ${upM} дақ`;
-  const bList = (backups && backups.items) || [];
-  const botOk = poll && poll.ok && !poll.conflict;
+  
+  Promise.all([
+    api('/api/account'), 
+    api('/api/health', { quiet: true }), 
+    api('/api/backups', { quiet: true }), 
+    api('/api/work-schedule', { quiet: true })
+  ]).then(([acc, health, backups, sch]) => {
+    if (!acc) return;
+    if (sch) S.schedule = sch;
+    const theme = document.documentElement.dataset.theme;
+    const poll = health && health.polling;
+    const upD = health ? Math.floor(health.uptime / 86400) : 0;
+    const upH = health ? Math.floor((health.uptime % 86400) / 3600) : 0;
+    const upM = health ? Math.floor((health.uptime % 3600) / 60) : 0;
+    const uptime = upD ? `${upD} рӯз ${upH} соат` : `${upH} соат ${upM} дақ`;
+    const bList = (backups && backups.items) || [];
+    const botOk = poll && poll.ok && !poll.conflict;
 
-  root.innerHTML = `
-    <div class="grid grid-2">
-      <div class="card">
-        <div class="card__head"><h2>Вақти корӣ</h2></div>
-        <div class="card__body--flush">
-          <div class="setting"><div class="setting__text"><b>${S.schedule && S.schedule.enabled ? 'Оғози кор: ' + esc(S.schedule.time) : 'Хомӯш'}</b>
-            <small>${S.schedule && S.schedule.enabled ? esc(`${daysText(S.schedule.days)} · сари вақт то ${onTimeUntil(S.schedule)}${S.schedule.report ? ' · ҳисобот ба гурӯҳ' : ''}`) : 'Бот аз кормандон намепурсад, ки ба кор омаданд ё не'}</small></div>
-            <button class="btn btn--primary btn--sm" data-open-schedule>${S.schedule && S.schedule.enabled ? 'Тағйир додан' : 'Гузоштан'}</button></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card__head"><h2>Логин ва рамз</h2><span class="card__note">ҳозир: ${esc(acc.login)}</span></div>
-        <div class="card__body">
-          <form class="stack" id="acc-form" autocomplete="off">
-            <label class="field"><span class="field__label">Логини нав</span>
-              <input id="acc-login" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(acc.login)}" autocomplete="off"></label>
-            <label class="field"><span class="field__label">Рамзи нав</span>
-              <span class="field__wrap"><input id="acc-new" type="password" autocomplete="new-password" placeholder="ақаллан 6 аломат">
-              <button type="button" class="field__eye" data-eye="acc-new" aria-label="Нишон додан">${ICON.lock}</button></span></label>
-            <label class="field"><span class="field__label">Рамзи нав — бори дигар</span>
-              <input id="acc-new2" type="password" autocomplete="new-password"></label>
-            <div id="acc-err" class="alert alert--danger" hidden></div>
-            <button class="btn btn--primary btn--block" type="submit" id="acc-save">Сабт кардан</button>
-            <span class="field__hint">Пас аз иваз дар дигар дастгоҳҳо аз нав ворид шудан лозим.</span>
-          </form>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card__head"><h2>Панел дар Telegram</h2></div>
-        <div class="card__body stack">
-          <p class="sheet__text">Дар бот фармони <b>/admin</b>-ро фиристед — ду тугма меояд: <b>«Кушодан дар Telegram»</b> ва <b>«Кушодан дар браузер»</b>.</p>
-          <p class="sheet__text">Админҳои гурӯҳи роҳбарият дар дохили Telegram <b>бе рамз</b> ворид мешаванд.</p>
-          ${acc.via === 'telegram' ? `<div class="alert alert--ok">Шумо ҳоло бо Telegram ворид шудаед: ${esc(acc.me || '')}</div>` : ''}
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card__head"><h2>Маълумот</h2></div>
-        <div class="card__body--flush">
-          <div class="setting"><div class="setting__text"><b>Нусхаи база</b><small>Файли пурраи база (.db)</small></div>
-            <button class="btn btn--ghost btn--sm" id="set-backup">${ICON.download} Боргирӣ</button></div>
-          <div class="setting"><div class="setting__text"><b>Давомот ба Excel</b><small>Моҳи кории ҷорӣ (CSV)</small></div>
-            <button class="btn btn--ghost btn--sm" id="set-att-csv">${ICON.download} CSV</button></div>
-          <div class="setting"><div class="setting__text"><b>Дархостҳо ба Excel</b><small>Ҳамаи дархостҳо (CSV)</small></div>
-            <button class="btn btn--ghost btn--sm" id="set-csv">${ICON.download} CSV</button></div>
-          <div class="setting"><div class="setting__text"><b>Нусхаҳои худкор</b>
-            <small>${bList.length ? `${bList.length} адад · охирин: ${esc(bList[0].time)}` : 'Ҳар рӯз ва пеш аз ҳар нест кардан сохта мешавад'}</small></div></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card__head"><h2>Система</h2></div>
-        <div class="card__body--flush">
-          <div class="setting"><div class="setting__text"><b>Бот</b>
-            <small><span class="status-dot" style="background:${botOk ? 'var(--ok)' : 'var(--danger)'}"></span>${poll && poll.conflict ? 'Ҳамин бот дар ҷои дигар ҳам кор мекунад — онро хомӯш кунед' : botOk ? `Кор мекунад · ${uptime} бе таваққуф` : 'Ҷавоб намедиҳад — худаш аз нав оғоз мешавад'}</small></div></div>
-          <div class="setting"><div class="setting__text"><b>Мавзӯъ</b><small>${theme === 'dark' ? 'Торик' : 'Равшан'}</small></div>
-            <button class="btn btn--ghost btn--sm" data-action="theme">${theme === 'dark' ? ICON.sun + ' Равшан' : 'Торик'}</button></div>
-          <div class="setting"><div class="setting__text"><b>Версия</b><small>${esc(health ? `${health.version} · ${health.tz}` : '—')}</small></div></div>
-          <div class="setting"><div class="setting__text"><b>Баромадан</b><small>Аз ҳамин дастгоҳ</small></div>
-            <button class="btn btn--soft-danger btn--sm" data-action="logout">Баромадан</button></div>
-        </div>
-      </div>
-
-      <div class="card danger-zone span-2">
-        <div class="card__head"><h2>Тоза кардани база</h2></div>
-        <p class="danger-note">Пеш аз ҳар тозакунӣ нусхаи эҳтиётии база худкор сохта мешавад. Логин, рамз ва вақти корӣ нест намешаванд.</p>
-        <div class="danger-list">
-          <div class="danger-item">
-            <div class="danger-item__text"><b>Маълумоти кӯҳна</b>
-              <small>Дархостҳо ва давомот то санаи интихобшуда (бо ҳамон рӯз)</small></div>
-            <div class="danger-item__action">
-              <input type="date" class="input" id="wipe-before" max="${todayYmd()}" aria-label="То сана">
-              <button class="btn btn--soft-danger" id="wipe-old">Нест кардан</button>
+    root.innerHTML = `
+      <div class="settings-grid">
+        <section class="panel">
+          <div class="panel__head">
+            <div class="panel__ico">${ICON.sun}</div>
+            <div class="panel__title"><h2>Танзимоти корӣ</h2><p>Мавзӯъ, вақти кор ва ҳолати бот</p></div>
+          </div>
+          <div class="panel__body">
+            <div class="rowset">
+              <div class="rowset__text"><b>Мавзӯи панел</b><small>${theme === 'dark' ? 'Ҳозир мавзӯи торик фаъол аст' : 'Ҳозир мавзӯи равшан фаъол аст'}</small></div>
+              <button class="btn btn--ghost btn--sm" data-action="theme">${theme === 'dark' ? ICON.sun + ' Равшан кардан' : 'Торик кардан'}</button>
+            </div>
+            <div class="rowset">
+              <div class="rowset__text"><b>Вақти корӣ</b><small>${S.schedule && S.schedule.enabled ? esc(`${daysText(S.schedule.days)} · сари вақт то ${onTimeUntil(S.schedule)}${S.schedule.report ? ' · ҳисобот ба гурӯҳ' : ''}`) : 'Ҳоло гузошта нашудааст — бот савол намефиристад'}</small></div>
+              <button class="btn ${S.schedule && S.schedule.enabled ? 'btn--ghost' : 'btn--primary'} btn--sm" data-open-schedule>${S.schedule && S.schedule.enabled ? ICON.edit + ' Тағйир додан' : 'Гузоштан'}</button>
+            </div>
+            <div class="rowset">
+              <div class="rowset__text"><b>Ҳолати бот</b><small><i class="status-dot" style="background:${botOk ? 'var(--ok)' : 'var(--danger)'}"></i>${poll && poll.conflict ? 'Ҳамин бот дар ҷои дигар ҳам кор мекунад — онро хомӯш кунед' : botOk ? `Кор мекунад · ${uptime} бе таваққуф` : 'Ҷавоб намедиҳад — худаш аз нав оғоз мешавад'}</small></div>
+              <span class="tag ${botOk ? 'tag--ok' : 'tag--danger'}">${botOk ? 'Фаъол' : 'Хато'}</span>
             </div>
           </div>
-          <div class="danger-item">
-            <div class="danger-item__text"><b>Ҳамаи дархостҳо ва давомот</b>
-              <small>Рӯйхати кормандон ва танзимот мемонанд</small></div>
-            <div class="danger-item__action">
-              <button class="btn btn--soft-danger" id="wipe-req">${ICON.trash} Нест кардан</button>
-            </div>
-          </div>
-          <div class="danger-item">
-            <div class="danger-item__text"><b>Тозакунии пурра</b>
-              <small>Ҳамаи маълумот ва рӯйхати кормандон; рақамгузорӣ аз #1 сар мешавад</small></div>
-            <div class="danger-item__action">
-              <button class="btn btn--danger" id="wipe-all">${ICON.alert} Тоза кардан</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>`;
+        </section>
 
-  bindEyes(root);
-  root.querySelector('[data-open-schedule]').addEventListener('click', openSchedule);
-  $('#acc-form').addEventListener('submit', saveAccount);
-  $('#set-backup').addEventListener('click', () => download('/api/backup.db'));
-  $('#set-csv').addEventListener('click', () => download('/api/export.csv'));
-  $('#set-att-csv').addEventListener('click', () => download(`/api/attendance.csv?period=${workMonth(0).key}`));
-  $('#wipe-old').addEventListener('click', () => {
-    const before = $('#wipe-before').value;
-    if (!before) { toast('Санаро интихоб кунед'); $('#wipe-before').focus(); return; }
-    doWipe('requests', before);
+        <section class="panel">
+          <div class="panel__head">
+            <div class="panel__ico">${ICON.download}</div>
+            <div class="panel__title"><h2>Маълумот ва ҳисобот</h2><p>Нусхаи пурраи база ва ҷадвалҳо барои Excel</p></div>
+          </div>
+          <div class="panel__body">
+            <div class="rowset">
+              <div class="rowset__text"><b>Нусхаи пурраи база</b><small>Файли SQLite — барои нигоҳдорӣ ва барқарорсозӣ</small></div>
+              <button class="btn btn--ghost btn--sm" id="set-backup">${ICON.download} .db</button>
+            </div>
+            <div class="rowset">
+              <div class="rowset__text"><b>Ҳисоботи давомот</b><small>Моҳи кории ҷорӣ, формати CSV</small></div>
+              <button class="btn btn--ghost btn--sm" id="set-att-csv">${ICON.download} CSV</button>
+            </div>
+            <div class="rowset">
+              <div class="rowset__text"><b>Ҳисоботи дархостҳо</b><small>Тамоми дархостҳо, формати CSV</small></div>
+              <button class="btn btn--ghost btn--sm" id="set-csv">${ICON.download} CSV</button>
+            </div>
+            <div class="panel__sub"><b>Нусхаҳои эҳтиётӣ</b><span>${bList.length ? `${bList.length} файл` : 'ҳоло нест'}</span></div>
+            ${bList.length ? `<ul class="backup-list">${bList.slice(0, 4).map((b) => `
+              <li><span class="backup-list__ico">${ICON.lock}</span>
+                <div><b>${esc(fmtDateTime(b.time))}</b><small>${fmtBytes(b.size)} · ${esc(b.name.replace(/^softclub_/, '').replace(/\.db$/, ''))}</small></div></li>`).join('')}</ul>`
+              : `<p class="panel__note">Пеш аз ҳар тозакунӣ нусхаи эҳтиётӣ худкор сохта мешавад.</p>`}
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__head">
+            <div class="panel__ico">${ICON.lock}</div>
+            <div class="panel__title"><h2>Ҳисоби админ</h2><p>Логин ва рамзи вуруд ба панел</p></div>
+            <span class="tag">${esc(acc.login)}</span>
+          </div>
+          <div class="panel__body">
+            <form id="acc-form" class="account-form" autocomplete="off">
+              <label class="field"><span class="field__label">Логин</span>
+                <input id="acc-login" class="input" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(acc.login)}" autocomplete="off"></label>
+              <div class="account-form__row">
+                <label class="field"><span class="field__label">Рамзи нав</span>
+                  <span class="field__wrap"><input id="acc-new" class="input" type="password" autocomplete="new-password" placeholder="ақаллан 6 аломат">
+                  <button type="button" class="field__eye" data-eye="acc-new" aria-label="Нишон додани рамз">${ICON.eye}</button></span></label>
+                <label class="field"><span class="field__label">Рамзи нав — бори дигар</span>
+                  <input id="acc-new2" class="input" type="password" autocomplete="new-password"></label>
+              </div>
+              <div id="acc-err" class="alert alert--danger" hidden></div>
+              <div class="account-form__actions">
+                <button class="btn btn--primary" type="submit" id="acc-save">Сабт кардан</button>
+                <button class="btn btn--ghost" type="button" data-action="logout">Баромадан</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="panel panel--danger">
+          <div class="panel__head">
+            <div class="panel__ico">${ICON.alert}</div>
+            <div class="panel__title"><h2>Тоза кардани маълумот</h2><p>Пеш аз ҳар амал нусхаи эҳтиётӣ худкор сохта мешавад</p></div>
+          </div>
+          <div class="panel__body">
+            <div class="danger-row">
+              <div class="rowset__text"><b>Маълумоти кӯҳна</b><small>Дархостҳо ва давомоти то санаи интихобшуда (бо ҳамон рӯз)</small></div>
+              <div class="danger-row__action">
+                <input type="date" class="input" id="wipe-before" max="${todayYmd()}" aria-label="То сана">
+                <button class="btn btn--soft-danger btn--sm" id="wipe-old">Тоза кардан</button>
+              </div>
+            </div>
+            <div class="danger-row">
+              <div class="rowset__text"><b>Ҳамаи дархостҳо ва давомот</b><small>Рӯйхати кормандон ва танзимот боқӣ мемонанд</small></div>
+              <div class="danger-row__action"><button class="btn btn--soft-danger btn--sm" id="wipe-req">${ICON.trash} Тоза кардан</button></div>
+            </div>
+            <div class="danger-row">
+              <div class="rowset__text"><b>Тозакунии пурра</b><small>Ҳамаи маълумот ва кормандон; рақамгузорӣ аз №1 сар мешавад</small></div>
+              <div class="danger-row__action"><button class="btn btn--danger btn--sm" id="wipe-all">${ICON.trash} Тоза кардан</button></div>
+            </div>
+            <p class="panel__note">Логин, рамз ва вақти корӣ нест карда намешаванд.</p>
+          </div>
+        </section>
+      </div>`;
+
+    bindEyes(root);
+    root.querySelector('[data-open-schedule]').addEventListener('click', openSchedule);
+    $('#acc-form').addEventListener('submit', saveAccount);
+    $('#set-backup').addEventListener('click', () => download('/api/backup.db'));
+    $('#set-csv').addEventListener('click', () => download('/api/export.csv'));
+    $('#set-att-csv').addEventListener('click', () => download(`/api/attendance.csv?period=${workMonth(0).key}`));
+    $('#wipe-old').addEventListener('click', () => {
+      const before = $('#wipe-before').value;
+      if (!before) { toast('Санаро интихоб кунед'); $('#wipe-before').focus(); return; }
+      doWipe('requests', before);
+    });
+    $('#wipe-req').addEventListener('click', () => doWipe('requests'));
+    $('#wipe-all').addEventListener('click', () => doWipe('all'));
   });
-  $('#wipe-req').addEventListener('click', () => doWipe('requests'));
-  $('#wipe-all').addEventListener('click', () => doWipe('all'));
 }
 
 async function saveAccount(e) {
@@ -2310,9 +2339,9 @@ async function saveAccount(e) {
 
 async function doWipe(scope, before) {
   const text = before
-    ? `Ҳамаи дархостҳо ва давомот то ${fmtDateShort(before)} (бо ҳамон рӯз) нест мешаванд.`
+    ? `Дархостҳо ва давомоти то ${fmtDateShort(before)} (бо ҳамон рӯз) нест мешаванд.`
     : scope === 'all'
-      ? 'ҲАМАИ дархостҳо, давомот ва рӯйхати кормандон нест мешаванд. Рақамгузорӣ аз #1 сар мешавад.'
+      ? 'ҲАМАИ дархостҳо, давомот ва рӯйхати кормандон нест мешаванд. Рақамгузорӣ аз №1 сар мешавад.'
       : 'ҲАМАИ дархостҳо ва давомот нест мешаванд. Рӯйхати кормандон мемонад.';
   const ok = await confirmDialog({
     title: before ? 'Нест кардани маълумоти кӯҳна' : scope === 'all' ? 'Тозакунии пурраи база' : 'Нест кардани ҳамаи дархостҳо ва давомот',
@@ -2394,7 +2423,12 @@ function promptDialog({ title, text = '', label = '', value = '', placeholder = 
 function bindEyes(root) {
   $$('[data-eye]', root).forEach((b) => b.addEventListener('click', () => {
     const input = document.getElementById(b.dataset.eye);
-    if (input) input.type = input.type === 'password' ? 'text' : 'password';
+    if (!input) return;
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    b.innerHTML = show ? ICON.eyeOff : ICON.eye;
+    b.setAttribute('aria-label', show ? 'Пинҳон кардани рамз' : 'Нишон додани рамз');
+    input.focus();
   }));
 }
 
@@ -2457,6 +2491,7 @@ async function boot() {
     const h = await (await fetch(`${API}/api/health`, { cache: 'no-store' })).json();
     if (h && h.time) S.today = h.time.slice(0, 10);
     $('#login-foot').textContent = `SoftClub HR Control · v${h.version}`;
+    $('#side-meta').textContent = `SoftClub HR · v${h.version}`;
   } catch (_) {}
 
   if (!token && tg) await tryTelegramLogin();
