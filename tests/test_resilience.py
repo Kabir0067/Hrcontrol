@@ -157,7 +157,24 @@ async def t_health_and_login():
     r = await admin_server.handle_health(FakeReq({"strict": "1"}))
     check("health strict=503 when polling stale", r.status == 503)
     r = await admin_server.handle_health(FakeReq({}))
+    body = _j.loads(r.body)
     check("health non-strict stays 200 for panel", r.status == 200)
+    check("health without token hides disk info", "disk" not in body)
+
+    tok = admin_server._make_jwt({"user": "softclub", "role": "admin"})
+    r = await admin_server.handle_health(FakeReq({}, headers={"Authorization": f"Bearer {tok}"}))
+    disk = _j.loads(r.body).get("disk") or {}
+    check("health with token reports disk",
+          disk.get("total", 0) > 0 and 0 < disk.get("used_pct", 0) <= 100)
+
+    import handlers as _h
+    admin_kb = _h._main_reply_kb(True).keyboard
+    plain_kb = _h._main_reply_kb(False).keyboard
+    check("admin keyboard has panel web app",
+          any(b.get("web_app", {}).get("url") == cfg.WEBAPP_URL
+              for row in admin_kb for b in row if isinstance(b, dict)))
+    check("employee keyboard has no panel button",
+          all("web_app" not in b for row in plain_kb for b in row if isinstance(b, dict)))
 
     main.bot.last_poll_ok = 0
     r = await admin_server.handle_health(FakeReq({"strict": "1"}))

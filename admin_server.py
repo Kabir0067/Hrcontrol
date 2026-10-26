@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import time
 import urllib.parse
 from collections import defaultdict
@@ -323,7 +324,7 @@ async def handle_health(request: web.Request) -> web.Response:
     strict = request.query.get("strict", "").lower() in ("1", "true", "yes")
     healthy = db_ok and (polling_ok or not strict)
 
-    return _json({
+    data = {
         "ok": healthy,
         "app": cfg.APP_NAME,
         "version": cfg.VERSION,
@@ -336,7 +337,19 @@ async def handle_health(request: web.Request) -> web.Response:
                     "conflict": conflict_age is not None and conflict_age < 900,
                     "conflict_age": conflict_age},
         "db": state,
-    }, 200 if healthy else 503)
+    }
+    # Ҳолати диск — танҳо барои панели воридшуда (барои мониторинги беруна лозим нест)
+    if _auth(request):
+        try:
+            usage = shutil.disk_usage("/")
+            data["disk"] = {
+                "total": usage.total,
+                "free": usage.free,
+                "used_pct": round(usage.used * 100 / usage.total) if usage.total else 0,
+            }
+        except OSError:
+            pass
+    return _json(data, 200 if healthy else 503)
 
 
 async def handle_login(request: web.Request) -> web.Response:

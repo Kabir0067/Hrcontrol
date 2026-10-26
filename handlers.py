@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import logging
+import time
 from datetime import timedelta
 
 from telebot.async_telebot import AsyncTeleBot
@@ -25,6 +26,7 @@ from telebot.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     LinkPreviewOptions,
+    MenuButtonWebApp,
     WebAppInfo,
 )
 
@@ -213,11 +215,16 @@ def _from_group(call: CallbackQuery) -> bool:
 #  Клавиатураҳо
 # ══════════════════════════════════════════════════════════════════════════
 
-def _main_reply_kb() -> ReplyKeyboardMarkup:
+def _main_reply_kb(admin: bool = False) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="Интихоб кунед…")
+    if admin:
+        kb.row(KeyboardButton("🛡 Панели идора", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
     kb.row(KeyboardButton("📝 Дархости нав"))
     kb.row(KeyboardButton("📋 Дархостҳои ман"), KeyboardButton("ℹ️ Кӯмак"))
     return kb
+
+
+_admin_cache: dict[int, tuple[float, bool]] = {}
 
 
 def _kb_types() -> InlineKeyboardMarkup:
@@ -418,7 +425,7 @@ def _worker_receipt(rec: dict) -> str:
     return "\n".join(lines)
 
 
-def _help_text() -> str:
+def _help_text(admin: bool = False) -> str:
     return (
         "ℹ️ <b>Бот чӣ кор мекунад</b>\n\n"
         "<b>1. Давомот</b>\n"
@@ -441,7 +448,9 @@ def _help_text() -> str:
         "/start — оғоз\n"
         "/darkhost — дархостҳои ман\n"
         "/bekor — бекор кардан\n"
-        "/kumak — ҳамин дастур\n\n"
+        "/kumak — ҳамин дастур\n"
+        + ("/admin — панели идора\n" if admin else "")
+        + "\n"
         "<i>То ҷавоби роҳбарият дархостро бекор карда метавонед.</i>"
     )
 
@@ -674,11 +683,26 @@ def register_handlers(bot: AsyncTeleBot) -> None:
 
     # ── дохилиҳо ────────────────────────────────────────────────────────
 
+    async def is_group_admin(user_id: int) -> bool:
+        """Оё корбар админ/соҳиби гурӯҳи роҳбарият аст? (5 дақиқа кэш)."""
+        hit = _admin_cache.get(user_id)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        ok = False
+        try:
+            member = await bot.get_chat_member(cfg.GROUP_ID, user_id)
+            ok = getattr(member, "status", "") in ("creator", "administrator")
+        except Exception as exc:
+            log.debug("get_chat_member: %s", exc)
+        _admin_cache[user_id] = (time.time(), ok)
+        return ok
+
     async def show_menu(chat_id: int, user, greet: bool = True) -> None:
         db.touch_employee(user.id, _display_name(user), user.username)
+        admin = await is_group_admin(user.id)
         if greet:
             await _safe(bot.send_message(
-                chat_id, _welcome(user.first_name or "ҳамкор"), reply_markup=_main_reply_kb()))
+                chat_id, _welcome(user.first_name or "ҳамкор"), reply_markup=_main_reply_kb(admin)))
         await _safe(bot.send_message(
             chat_id, "<b>Чӣ хабар?</b>\nЯке аз инҳоро интихоб кунед:",
             reply_markup=_kb_types()))
@@ -787,7 +811,8 @@ def register_handlers(bot: AsyncTeleBot) -> None:
 
     @bot.message_handler(commands=["help", "kumak"], func=_private)
     async def cmd_help(message: Message):
-        await _safe(bot.send_message(message.chat.id, _help_text(), reply_markup=_main_reply_kb()))
+        admin = await is_group_admin(message.from_user.id)
+        await _safe(bot.send_message(message.chat.id, _help_text(admin), reply_markup=_main_reply_kb(admin)))
 
     @bot.message_handler(commands=["darkhost", "holat", "status", "my"], func=_private)
     async def cmd_status(message: Message):
@@ -807,13 +832,26 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(InlineKeyboardButton("📱 Кушодан дар Telegram", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
         kb.add(InlineKeyboardButton("🌐 Кушодан дар браузер", url=cfg.WEBAPP_URL))
+
+        # Барои админҳои гурӯҳ: тугмаи доимии меню — панел бидуни рамз, як пахш.
+        is_admin = await is_group_admin(message.from_user.id)
+        if is_admin:
+            try:
+                await bot.set_chat_menu_button(
+                    chat_id=message.chat.id,
+                    menu_button=MenuButtonWebApp(text="Панел", web_app=WebAppInfo(url=cfg.WEBAPP_URL)),
+                )
+            except Exception as exc:
+                log.debug("set_chat_menu_button: %s", exc)
+
         await _safe(bot.send_message(
             message.chat.id,
             "🔐 <b>Панели идора</b>\n\n"
             "Давомот, дархостҳо, кормандон ва омор — дар як ҷо.\n\n"
             "📱 <b>Telegram</b> — ҳамин ҷо мекушояд.\n"
             "🌐 <b>Браузер</b> — барои компютер ва планшет.\n\n"
-            f"<i>Суроға: {_esc(cfg.WEBAPP_URL)}</i>",
+            + ("✅ Шумо админи гурӯҳ ҳастед — вуруд <b>бидуни рамз</b>.\n\n" if is_admin else "")
+            + f"<i>Суроға: {_esc(cfg.WEBAPP_URL)}</i>",
             reply_markup=kb,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         ))
@@ -1384,7 +1422,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                                          _my_requests_text(db.get_user_requests(uid, 5))))
             return
         if text.startswith("ℹ️"):
-            await _safe(bot.send_message(message.chat.id, _help_text()))
+            await _safe(bot.send_message(message.chat.id, _help_text(await is_group_admin(uid))))
             return
 
         if step == "reason_text":

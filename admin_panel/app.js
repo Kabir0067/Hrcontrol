@@ -235,7 +235,8 @@ function fmtBytes(n) {
   n = Number(n) || 0;
   if (n < 1024) return `${n} Б`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} КБ`;
-  return `${(n / (1024 * 1024)).toFixed(1)} МБ`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} МБ`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} ГБ`;
 }
 
 function fmtMinutes(m) {
@@ -468,6 +469,8 @@ function flushDeletes() { [...pendingDeletes.values()].forEach((e) => e.flush())
 function showLogin() {
   $('#app').hidden = true;
   $('#login').hidden = false;
+  const hint = $('#login-hint');
+  if (hint) hint.hidden = !!tg;
   setTimeout(() => { const i = $('#in-login'); if (i && !i.value && !tg) i.focus(); }, 50);
 }
 
@@ -494,6 +497,7 @@ async function doLogin(e) {
   const login = $('#in-login').value.trim();
   const password = $('#in-pass').value;
   const errBox = $('#login-error');
+  errBox.className = 'alert alert--danger';
   errBox.hidden = true;
   if (!login || !password) {
     errBox.textContent = 'Логин ва рамзро нависед';
@@ -2196,6 +2200,7 @@ async function initSettings() {
     const uptime = upD ? `${upD} рӯз ${upH} соат` : `${upH} соат ${upM} дақ`;
     const bList = (backups && backups.items) || [];
     const botOk = poll && poll.ok && !poll.conflict;
+    const disk = health && health.disk;
 
     root.innerHTML = `
       <div class="settings-grid">
@@ -2216,6 +2221,10 @@ async function initSettings() {
             <div class="rowset">
               <div class="rowset__text"><b>Ҳолати бот</b><small><i class="status-dot" style="background:${botOk ? 'var(--ok)' : 'var(--danger)'}"></i>${poll && poll.conflict ? 'Ҳамин бот дар ҷои дигар ҳам кор мекунад — онро хомӯш кунед' : botOk ? `Кор мекунад · ${uptime} бе таваққуф` : 'Ҷавоб намедиҳад — худаш аз нав оғоз мешавад'}</small></div>
               <span class="tag ${botOk ? 'tag--ok' : 'tag--danger'}">${botOk ? 'Фаъол' : 'Хато'}</span>
+            </div>
+            <div class="rowset">
+              <div class="rowset__text"><b>Ҷои холӣ дар диск</b><small>${disk ? `${fmtBytes(disk.free)} холӣ аз ${fmtBytes(disk.total)}${disk.used_pct >= 85 ? ' — фазо кам шудааст, назорат лозим аст' : ''}` : 'Ҳоло дастрас нест'}</small></div>
+              ${disk ? `<span class="tag ${disk.used_pct >= 90 ? 'tag--danger' : disk.used_pct >= 80 ? 'tag--warn' : 'tag--ok'}">${Math.max(0, 100 - disk.used_pct)}% холӣ</span>` : ''}
             </div>
           </div>
         </section>
