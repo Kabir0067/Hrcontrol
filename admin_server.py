@@ -345,7 +345,8 @@ async def handle_health(request: web.Request) -> web.Response:
             data["disk"] = {
                 "total": usage.total,
                 "free": usage.free,
-                "used_pct": round(usage.used * 100 / usage.total) if usage.total else 0,
+                "used_pct": (round((usage.total - usage.free) * 100 / usage.total)
+                             if usage.total else 0),
             }
         except OSError:
             pass

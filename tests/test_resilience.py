@@ -166,6 +166,9 @@ async def t_health_and_login():
     disk = _j.loads(r.body).get("disk") or {}
     check("health with token reports disk",
           disk.get("total", 0) > 0 and 0 < disk.get("used_pct", 0) <= 100)
+    check("disk percent matches available space",
+          disk.get("total") and disk.get("used_pct") ==
+          round((disk["total"] - disk["free"]) * 100 / disk["total"]))
 
     import handlers as _h
     admin_kb = _h._main_reply_kb(True).keyboard
