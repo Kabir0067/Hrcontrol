@@ -44,6 +44,10 @@ ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
+# Агар хотираи сервер пур шавад, система аввал дигар хидматҳоро мекушад —
+# ин бот охирин мешавад (ва Restart=always онро бармегардонад)
+OOMScoreAdjust=-500
+
 # Агар хотира «шорад» — systemd мекушад ва Restart=always аз нав мебардорад
 MemoryMax=512M
 
