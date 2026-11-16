@@ -172,6 +172,18 @@ def _display_name(user) -> str:
     return name
 
 
+def _official_name(user) -> str:
+    """Номи расмӣ (аз Google Sheet ё панел) + @username; набошад — номи Telegram."""
+    try:
+        emp = db.get_employee(user.id)
+    except Exception:
+        emp = None
+    official = ((emp or {}).get("alias") or "").strip() or ((emp or {}).get("sheet_name") or "").strip()
+    if not official:
+        return _display_name(user)
+    return f"{official} (@{user.username})" if user.username else official
+
+
 def _short_name(full: str) -> str:
     return full.split(" (@")[0].strip() or full
 
@@ -772,9 +784,8 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         req_type = state["type"]
         reason = state.get("reason", "—")
         minutes = int(state.get("minutes", 0))
-        name = _display_name(user)
-
-        db.touch_employee(user.id, name, user.username)
+        db.touch_employee(user.id, _display_name(user), user.username)
+        name = _official_name(user)                 # дар гурӯҳ — номи расмӣ
         req_id = db.add_request(user.id, name, req_type, reason, minutes)
         rec = db.get_request(req_id)
         if not rec:

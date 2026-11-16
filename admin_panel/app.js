@@ -2378,7 +2378,7 @@ function gsPanelHtml(g) {
         <label class="switch"><input type="checkbox" data-gs="times" ${g.times ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
       </div>
       <div class="rowset">
-        <div class="rowset__text"><b>Пайвасти худкор аз рӯи ном</b><small>Агар номи корманд дар Telegram ва дар ҷадвал қариб якхела бошад</small></div>
+        <div class="rowset__text"><b>Пайвасти худкор аз рӯи ном</b><small>Хомӯш (тавсия) — танҳо аз рӯи «Телеграм id». Фаъол — агар номи Telegram ва номи расмӣ қариб якхела бошанд</small></div>
         <label class="switch"><input type="checkbox" data-gs="autolink" ${g.autolink ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
       </div>
       <p class="panel__note">Бот танҳо ячейкаи холӣ ё навиштаи худашро иваз мекунад — навиштаи дастӣ ҳеҷ гоҳ вайрон намешавад.${g.since ? ` Аз ${esc(fmtDateShort(g.since))} навишта мешавад.` : ''}
@@ -2426,18 +2426,21 @@ function openSheetLinks(g) {
     const rows = (state.rows || []).filter((r) => r.name);
     const emps = state.employees || [];
     const used = new Map(rows.filter((r) => r.user_id).map((r) => [r.user_id, r.row]));
+    const who = (e) => `${shortName(e.tg_name || e.name)}${e.username ? ' @' + e.username : ''} · ID ${e.user_id}`;
+    const byId = new Map(emps.map((e) => [e.user_id, e]));
     const list = rows.map((r) => {
       const sugg = r.suggest || [];
       const sugIds = new Set(sugg.map((s) => s.user_id));
       const options = ['<option value="">— пайваст нест —</option>']
-        .concat(sugg.map((s) => `<option value="${s.user_id}">★ ${esc(shortName(s.name))} · ${Math.round(s.score * 100)}%</option>`))
+        .concat(sugg.map((s) => `<option value="${s.user_id}">★ ${esc(byId.has(s.user_id) ? who(byId.get(s.user_id)) : shortName(s.name))}</option>`))
         .concat(emps.filter((e) => !sugIds.has(e.user_id) && (e.active || e.user_id === r.user_id)).map((e) =>
-          `<option value="${e.user_id}" ${e.user_id === r.user_id ? 'selected' : ''}>${esc(shortName(e.name))}${used.has(e.user_id) && e.user_id !== r.user_id ? ` · сатри ${used.get(e.user_id)}` : ''}</option>`));
+          `<option value="${e.user_id}" ${e.user_id === r.user_id ? 'selected' : ''}>${esc(who(e))}${used.has(e.user_id) && e.user_id !== r.user_id ? ` · сатри ${used.get(e.user_id)}` : ''}</option>`));
       const plan = r.plan_in ? `${r.plan_in}${r.plan_out ? '–' + r.plan_out : ''}` : 'вақт нест';
-      const note = r.user_id ? `<span style="color:var(--ok-text)">пайваст</span>`
+      const linkedEmp = r.user_id ? byId.get(r.user_id) : null;
+      const note = r.user_id ? `<span style="color:var(--ok-text)">ID ${esc(r.tg)}${linkedEmp ? ' · Telegram: ' + esc(shortName(linkedEmp.tg_name || '')) : ''}</span>`
         : r.dup ? `<span style="color:var(--danger-text)">ID ${esc(r.tg)} дар 2 сатр</span>`
           : r.unknown ? `ID ${esc(r.tg)} — ҳанӯз ба бот /start накардааст`
-            : sugg.length ? `пешниҳод: ${esc(shortName(sugg[0].name))}` : 'пайваст нест';
+            : 'Телеграм id нест';
       return `<div class="gs-row${r.user_id ? ' is-linked' : ''}">
         <span class="gs-row__n">${r.row}</span>
         <span class="gs-row__main"><b>${esc(r.name)}</b><small>${esc(plan)} · ${note}</small></span>
@@ -2447,10 +2450,10 @@ function openSheetLinks(g) {
     const unl = state.unlinked || [];
     $('#sheet-body').innerHTML = `
       <div class="sheet__title">Кормандон дар ҷадвал</div>
-      <p class="sheet__text">Барои ҳар сатри варақи «${esc(state.tab || '')}» корманди ботро интихоб кунед. Telegram ID ба сутуни «Телеграм id» навишта мешавад ва аз ҳамин лаҳза вақти омадан ба ҳамин сатр меравад.</p>
+      <p class="sheet__text">Бот кормандро <b>танҳо аз рӯи «Телеграм id»</b> мешиносад. Барои ҳар сатри варақи «${esc(state.tab || '')}» (номи расмӣ) ҳисоби Telegram-и ҳамон одамро интихоб кунед — ID худкор ба сутуни «Телеграм id» навишта мешавад. ID-ро дастӣ дар ҷадвал навиштан ҳам мумкин аст.</p>
       <div class="gs-list">${list || '<div class="card__body">' + emptyState('Дар ҷадвал корманд нест') + '</div>'}</div>
       ${unl.length ? `<div class="section-title">Дар бот ҳастанд, дар ҷадвал не · ${unl.length}</div>
-        <p class="sheet__text small">${unl.map((u) => esc(shortName(u.name))).join(' · ')}</p>
+        <p class="sheet__text small">${unl.map((u) => esc(who(u))).join('<br>')}</p>
         <p class="panel__note">Агар ин кормандон бояд дар ҷадвал бошанд, барояшон дар ҷадвал сатр илова кунед (номи корманд, вақтҳо) ва баъд ин ҷо интихоб кунед.</p>` : ''}`;
     $$('#sheet-body select[data-row]').forEach((sel) => sel.addEventListener('change', async () => {
       sel.disabled = true;

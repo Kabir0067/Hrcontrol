@@ -437,6 +437,27 @@ async def run():
     check("403 explains what to share", "bot@x.iam" in gs._error_text(403, "{}", "bot@x.iam")
           and "Editor" in gs._error_text(403, "{}", "bot@x.iam"))
 
+    # ── пешфарз: танҳо аз рӯи «Телеграм id» (номҳои Telegram ғайрирасмӣ) ──
+    at("2026-11-16", "07:00")
+    book0 = build_book()
+    s0 = gs.Syncer(FakeClient(book0), "BOOK0", "bot@x.iam")
+    await s0.sync()
+    check("default: no name-based linking", all(book0.cell("November 2026", r, 1).get("v") is None for r in range(4, 9)))
+    book0.put("November 2026", R_HAKIM, 1, float(H))          # корхона ID-ро дастӣ (ҳамчун рақам) навишт
+    book0.put("November 2026", R_FARIDA, 1, f" {F} ")          # ё ҳамчун матн бо фосила
+    await s0.sync()
+    check("typed Telegram id links the row", db.emp_schedule(db.get_employee(H), db.get_schedule())["time"] == "10:00"
+          and db.emp_schedule(db.get_employee(F), db.get_schedule())["time"] == "09:30")
+    check("official sheet name becomes the display name",
+          db.get_employee(H)["display"] == "Hakim Jumaev" and db.get_employee(F)["display"] == "Sharifzoda Farida")
+    check("Telegram name kept separately", db.get_employee(F)["name"] == "Фарида Шарифзода")
+    names = {e["user_id"]: e for e in db.list_employees()}
+    check("panel lists the official name", names[F]["alias"] == "Sharifzoda Farida")
+    db.update_employee(F, alias="Фарида (менеҷер)")
+    check("name set in the panel still wins", db.get_employee(F)["display"] == "Фарида (менеҷер)")
+    db.update_employee(F, alias="")
+    db.set_settings({"gsheet_autolink": "1"})                  # барои санҷишҳои поён
+
     # ── синхронизатсияи аввал: «Лист1» → November 2026 ────────────────
     book = build_book()
     sync = gs.Syncer(FakeClient(book), "BOOK", "bot@x.iam")
@@ -474,6 +495,7 @@ async def run():
     due = {r["user_id"]: r for r in db.create_due_attendance()}
     check("Hakim asked at his 10:00", H in due and due[H]["scheduled_at"] == "2026-11-16 10:00:00")
     check("Farida asked at her 09:30", db.get_today_attendance(F)["scheduled_at"] == "2026-11-16 09:30:00")
+    check("attendance uses the official name", db.get_today_attendance(F)["name"] == "Sharifzoda Farida")
     at("2026-11-16", "10:07")
     db.set_attendance_present(db.get_today_attendance(H)["id"])
     db.set_attendance_absent(db.get_today_attendance(F)["id"], "Бемор", "пагоҳ")
@@ -533,6 +555,15 @@ async def run():
     check("leave before arrival rejected", ok)
     cell = db.admin_set_attendance(K, "2026-11-16", "present", clock="14:10")
     check("edit without «left» keeps leave time", cell["out"] == "20:05")
+
+    # дархост ба гурӯҳ — бо номи расмӣ
+    at("2026-11-16", "19:10")
+    await press(F, "t:leaving_early")
+    await press(F, "r:0")
+    await press(F, "m:10")
+    calls = await press(F, "f:send")
+    group = [c[2] or "" for c in calls if c[0] == "send" and c[1] == cfg.GROUP_ID]
+    check("request to managers shows the official name", any("Sharifzoda Farida" in t for t in group), group[:1])
 
     # «Омадам» → тугмаи «рафтам»
     at("2026-11-17", "09:02")

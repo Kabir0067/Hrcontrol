@@ -904,7 +904,8 @@ class Syncer:
         for uid in dups:
             links.pop(uid, None)
 
-        if primary and _setting_on("gsheet_autolink"):
+        # Пешфарз — хомӯш: корманд танҳо аз рӯи «Телеграм id» пайваст мешавад
+        if primary and _setting_on("gsheet_autolink", "0"):
             found = self._autolink(rows, emps, links)
             if found:
                 await self.client.batch([_text_cell(tab.sheet_id, row.r, C_TG, str(uid)) for row, uid in found])
@@ -914,7 +915,8 @@ class Syncer:
                     log.info("📗 Пайвасти худкор: «%s» ↔ %s", row.name, by_id[uid]["name"])
 
         if primary:
-            db.sync_sheet_plans({uid: (row.plan_in, row.plan_out) for uid, row in links.items() if uid in by_id})
+            db.sync_sheet_plans({uid: (row.plan_in, row.plan_out, row.name)
+                                 for uid, row in links.items() if uid in by_id})
             await self.ensure_formulas(tab, rows)
 
         since_txt = db.get_setting("gsheet_since")
@@ -1126,20 +1128,21 @@ def panel_state() -> dict:
         if not e["active"] or e["user_id"] in linked:
             continue
         ranked = sorted(((name_score(e["name"], r["name"]), r) for r in free_rows), key=lambda x: -x[0])
-        unlinked.append({"user_id": e["user_id"], "name": e["name"], "username": e["username"],
+        unlinked.append({"user_id": e["user_id"], "name": e["name"], "tg_name": e["tg_name"],
+                         "username": e["username"],
                          "suggest": [{"row": r["row"], "name": r["name"], "score": s}
-                                     for s, r in ranked[:3] if s >= 0.6]})
+                                     for s, r in ranked[:3] if s >= 0.75]})
     for item in rows:
         if item["user_id"] or not item["name"]:
             continue
         ranked = sorted(((name_score(u["name"], item["name"]), u) for u in unlinked), key=lambda x: -x[0])
         item["suggest"] = [{"user_id": u["user_id"], "name": u["name"], "score": s}
-                           for s, u in ranked[:3] if s >= 0.6]
+                           for s, u in ranked[:3] if s >= 0.75]
     return {
         "configured": STATE["configured"],
         "enabled": _setting_on("gsheet_enabled"),
         "times": _setting_on("gsheet_times"),
-        "autolink": _setting_on("gsheet_autolink"),
+        "autolink": _setting_on("gsheet_autolink", "0"),
         "url": cfg.GSHEET_URL,
         "email": STATE["email"],
         "status": {k: STATE[k] for k in ("ok", "error", "running", "last_try", "last_ok", "last_write",
@@ -1148,7 +1151,8 @@ def panel_state() -> dict:
         "tab": (snap or {}).get("tab"),
         "rows": rows,
         "unlinked": unlinked,
-        "employees": [{"user_id": e["user_id"], "name": e["name"], "active": bool(e["active"])} for e in emps],
+        "employees": [{"user_id": e["user_id"], "name": e["name"], "tg_name": e["tg_name"],
+                       "username": e["username"], "active": bool(e["active"])} for e in emps],
     }
 
 

@@ -163,7 +163,8 @@ CREATE TABLE IF NOT EXISTS employees (
     work_time  TEXT,              -- вақти алоҳидаи оғози кор (HH:MM) ё NULL = умумӣ
     work_days  TEXT,              -- рӯзҳои кории алоҳида ("0,1,2") ё NULL = умумӣ
     sheet_time  TEXT,             -- «Омадан (брнм)» аз Google Sheet (HH:MM) — худкор
-    sheet_leave TEXT              -- «Рафтан (брнм)» аз Google Sheet (HH:MM) — худкор
+    sheet_leave TEXT,             -- «Рафтан (брнм)» аз Google Sheet (HH:MM) — худкор
+    sheet_name  TEXT              -- номи расмӣ аз Google Sheet («Номи Корманд») — худкор
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -215,6 +216,7 @@ _EXTRA_COLUMNS = {
         "work_days": "TEXT",
         "sheet_time": "TEXT",
         "sheet_leave": "TEXT",
+        "sheet_name": "TEXT",
     },
     "attendance": {
         "reminded_at": "TEXT",
@@ -391,7 +393,7 @@ def purge_stale_states() -> int:
 # ──────────────────────────────────────────────────────────────────────────
 
 # Номе, ки админ гузоштааст, аз номи Telegram афзалият дорад.
-_EMP_NAME = "COALESCE(NULLIF(TRIM(e.alias), ''), e.name)"
+_EMP_NAME = "COALESCE(COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')), e.name)"
 _UNSET = object()
 
 
@@ -459,7 +461,8 @@ def list_employees() -> list[dict]:
     with _ro() as conn:
         rows = _rows(conn.execute(
             f"""
-            SELECT e.user_id, e.name, e.username, e.alias, e.active,
+            SELECT e.user_id, e.name, e.username,
+                   COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')) AS alias, e.active,
                    e.first_seen, e.last_seen, e.work_time, e.work_days,
                    e.sheet_time, e.sheet_leave, {_EMP_NAME} AS display,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id) AS requests,
@@ -1224,25 +1227,28 @@ def attendance_fingerprint(date_from: str) -> tuple:
 def employees_brief() -> list[dict]:
     with _ro() as conn:
         return _rows(conn.execute(
-            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active,
-                       e.sheet_time, e.sheet_leave
+            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.name AS tg_name, e.username, e.active,
+                       e.sheet_time, e.sheet_leave, e.sheet_name
                   FROM employees e ORDER BY e.active DESC, name COLLATE NOCASE"""))
 
 
-def sync_sheet_plans(plans: dict[int, tuple[str | None, str | None]]) -> int:
-    """Вақтҳои «Омадан/Рафтан (брнм)» аз ҷадвал → база. Дигарон — тоза.
+def sync_sheet_plans(plans: dict[int, tuple]) -> int:
+    """Аз ҷадвал → база: (вақти омадан, вақти рафтан, номи расмӣ). Дигарон — тоза.
 
     Бармегардонад: чанд корманд иваз шуд.
     """
     changed = 0
     with _tx() as conn:
-        for row in conn.execute("SELECT user_id, sheet_time, sheet_leave FROM employees").fetchall():
-            want_in, want_out = plans.get(row["user_id"], (None, None))
+        for row in conn.execute(
+                "SELECT user_id, sheet_time, sheet_leave, sheet_name FROM employees").fetchall():
+            want_in, want_out, want_name = (tuple(plans.get(row["user_id"], ())) + (None, None, None))[:3]
             want_in = _valid_clock(want_in) or None
             want_out = _valid_clock(want_out) or None
-            if (row["sheet_time"] or None, row["sheet_leave"] or None) != (want_in, want_out):
-                conn.execute("UPDATE employees SET sheet_time = ?, sheet_leave = ? WHERE user_id = ?",
-                             (want_in, want_out, row["user_id"]))
+            want_name = " ".join(str(want_name or "").split())[:80] or None
+            have = (row["sheet_time"] or None, row["sheet_leave"] or None, row["sheet_name"] or None)
+            if have != (want_in, want_out, want_name):
+                conn.execute("UPDATE employees SET sheet_time = ?, sheet_leave = ?, sheet_name = ? WHERE user_id = ?",
+                             (want_in, want_out, want_name, row["user_id"]))
                 changed += 1
     if changed:
         log.info("📗 Вақтҳо аз Google Sheet: %d корманд навсозӣ шуд", changed)
@@ -1607,7 +1613,7 @@ def get_summary() -> dict:
             "SELECT type, COUNT(*) c FROM requests GROUP BY type"
         )}
         recent = _rows(conn.execute(
-            f"""SELECT r.*, NULLIF(TRIM(e.alias), '') AS alias
+            f"""SELECT r.*, COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')) AS alias
                   FROM requests r LEFT JOIN employees e ON e.user_id = r.user_id
                  ORDER BY r.id DESC LIMIT 10"""))
         people = conn.execute(
@@ -1630,7 +1636,7 @@ def get_overview() -> dict:
     week = get_attendance_stats(week_from, today.isoformat())
     with _ro() as conn:
         pending = _rows(conn.execute(
-            """SELECT r.*, NULLIF(TRIM(e.alias), '') AS alias
+            """SELECT r.*, COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')) AS alias
                  FROM requests r LEFT JOIN employees e ON e.user_id = r.user_id
                 WHERE r.status = 'pending' ORDER BY r.id LIMIT 20"""))
         employees = conn.execute("SELECT COUNT(*) c FROM employees WHERE active = 1").fetchone()["c"]
@@ -1674,7 +1680,8 @@ def _filter_clause(
     if search:
         needle = f"%{search.lower()}%"
         where.append("(ulower(r.name) LIKE ? OR ulower(r.reason) LIKE ? OR "
-                     "r.user_id IN (SELECT user_id FROM employees WHERE ulower(alias) LIKE ?))")
+                     "r.user_id IN (SELECT user_id FROM employees WHERE "
+                     "ulower(COALESCE(NULLIF(TRIM(alias), ''), sheet_name)) LIKE ?))")
         params += [needle, needle, needle]
     return " AND ".join(where), params
 
@@ -1683,7 +1690,7 @@ _SORTS = {
     "new": "r.id DESC",
     "old": "r.id ASC",
     "minutes": "r.minutes DESC, r.id DESC",
-    "name": "COALESCE(NULLIF(TRIM(e.alias), ''), r.name) COLLATE NOCASE, r.id DESC",
+    "name": "COALESCE(COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')), r.name) COLLATE NOCASE, r.id DESC",
 }
 
 
@@ -1707,7 +1714,7 @@ def query_requests(
             f"SELECT COUNT(*) c FROM requests r WHERE {clause}", params
         ).fetchone()["c"]
         items = _rows(conn.execute(
-            f"""SELECT r.*, NULLIF(TRIM(e.alias), '') AS alias
+            f"""SELECT r.*, COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')) AS alias
                   FROM requests r LEFT JOIN employees e ON e.user_id = r.user_id
                  WHERE {clause} ORDER BY {_SORTS.get(sort or '', 'r.id DESC')}
                  LIMIT ? OFFSET ?""",
@@ -1724,7 +1731,7 @@ def get_worker_stats(date_from: str | None = None, date_to: str | None = None) -
         rows = _rows(conn.execute(
             f"""
             SELECT r.user_id,
-                   COALESCE(NULLIF(TRIM(e.alias), ''), e.name, MAX(r.name)) AS name,
+                   COALESCE(COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')), e.name, MAX(r.name)) AS name,
                    COUNT(*)                                         AS total,
                    COALESCE(SUM(r.type = 'late'), 0)                AS late,
                    COALESCE(SUM(r.type = 'absent'), 0)              AS absent,
@@ -1799,7 +1806,7 @@ def export_rows(**filters) -> list[dict]:
     clause, params = _filter_clause(**filters)
     with _ro() as conn:
         return _rows(conn.execute(
-            f"""SELECT r.*, NULLIF(TRIM(e.alias), '') AS alias
+            f"""SELECT r.*, COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')) AS alias
                   FROM requests r LEFT JOIN employees e ON e.user_id = r.user_id
                  WHERE {clause} ORDER BY r.id DESC""", params))
 
@@ -2182,7 +2189,7 @@ def get_worker_detail(user_id: int, date_from: str | None = None,
         "user_id": int(user_id),
         "name": emp["display"] if emp else fallback,
         "tg_name": emp["name"] if emp else fallback,
-        "alias": emp["alias"] if emp else None,
+        "alias": (emp["alias"] or emp["sheet_name"]) if emp else None,
         "active": bool(emp["active"]) if emp else False,
         "work_time": (_valid_clock(emp["work_time"]) or None) if emp else None,
         "work_days": _parse_days(emp["work_days"]) if emp else None,
