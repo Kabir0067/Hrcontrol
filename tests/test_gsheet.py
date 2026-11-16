@@ -73,6 +73,8 @@ class FakeBook:
         self.next_meta = 1
         self.writes = 0
         self.fail = None
+        self.locale = "ru_RU"
+        self.sep = ";"                 # Google-и ru_RU формулаи бо «,»-ро намефаҳмад → #ERROR!
 
     def add(self, sid, title, index):
         self.sheets[sid] = {"title": title, "index": index, "cells": {}, "meta": []}
@@ -101,7 +103,8 @@ class FakeClient:
 
     async def meta(self):
         self._check()
-        return {"sheets": [{"properties": {"sheetId": sid, "title": s["title"], "index": s["index"],
+        return {"properties": {"locale": self.book.locale},
+                "sheets": [{"properties": {"sheetId": sid, "title": s["title"], "index": s["index"],
                                            "gridProperties": {"rowCount": 1000, "columnCount": 68}},
                             "developerMetadata": s["meta"]} for sid, s in self.book.sheets.items()]}
 
@@ -120,6 +123,9 @@ class FakeClient:
             for c in range(c1, c2 + 1):
                 cell = sheet["cells"].get((r, c), {})
                 v = cell.get("f") if render == "FORMULA" and cell.get("f") else cell.get("v")
+                if render == "FORMATTED_VALUE" and cell.get("f"):
+                    other = "," if self.book.sep == ";" else ";"
+                    v = "#ERROR!" if ("R[0]C" in cell["f"] or other in cell["f"].replace('","', "")) else "50%"
                 row.append("" if v is None else v)
             while row and row[-1] == "":
                 row.pop()
@@ -444,12 +450,13 @@ async def run():
     check("title row fixed", book.cell("November 2026", 0, 0)["v"] == "Ҳузури Кормандон — November 2026")
     check("day headers untouched (already November)", book.cell("November 2026", 1, gs.day_col(4))["v"] == "4-Чоршабе")
     check("broken «Натиҷа %» formulas replaced",
-          all(book.cell("November 2026", r, 67)["f"] == gs.result_formula(r + 1) for r in range(4, 9)))
+          all(book.cell("November 2026", r, 67)["f"] == gs.result_formula(r + 1, ";") for r in range(4, 9)))
     tg = lambda r: book.cell("November 2026", r, 1).get("v")           # noqa: E731
     check("autolink Cyrillic Telegram name → row", tg(R_KABIR) == str(K), tg(R_KABIR))
     check("autolink exact name", tg(R_HAKIM) == str(H))
     check("autolink swapped order", tg(R_FARIDA) == str(F))
     check("no autolink for first-name-only / strangers", tg(R_GHOLIB) is None and tg(R_MASAFI) is None)
+    check("locale-aware separator chosen («;» for ru_RU)", sync._sep == ";")
     check("sync start date remembered", db.get_setting("gsheet_since") == "2026-11-16")
     emp_k = db.get_employee(K)
     sch_k = db.emp_schedule(emp_k, db.get_schedule())
@@ -595,7 +602,7 @@ async def run():
           and book.cell(D_, R_HAKIM, gs.day_col(6, "out"))["bg"] == gs.SUN_OUT
           and book.cell(D_, R_HAKIM, gs.day_col(1))["bg"] == "ffffff"
           and book.cell(D_, R_KABIR, gs.day_col(1))["bg"] == "ebf3fb")
-    check("result formulas in the new month", all(book.cell(D_, r, 67)["f"] == gs.result_formula(r + 1)
+    check("result formulas in the new month", all(book.cell(D_, r, 67)["f"] == gs.result_formula(r + 1, ";")
                                                   for r in range(4, 9)))
     check("November data kept", abs(book.cell("November 2026", R_KABIR, gs.day_col(16))["v"] - T("14:30")) < 1e-9)
 
@@ -639,6 +646,18 @@ async def run():
         ok = True
     check("stale panel (row moved) is refused", ok)
     await sync.link(R_KABIR + 1, "Kabir Ghaffurov", K)
+
+    # забони ҷадвал нодуруст муайян шуд → пас аз санҷиш ҷудокунандаи дигар
+    book2 = build_book()
+    book2.locale = "en_US"           # Google гуфт en, вале ҷадвал «;» мехоҳад
+    s2 = gs.Syncer(FakeClient(book2), "BOOK2", "bot@x.iam")
+    tab2 = (await s2.tabs())[0]
+    rows2 = gs.parse_rows(await s2.client.values(tab2.title, "A1:BP400"))
+    await s2.ensure_formulas(tab2, rows2, force=True)
+    check("wrong guess → verified and retried with the other separator",
+          s2._sep == ";" and book2.cell("Лист1", 4, 67)["f"] == gs.result_formula(5, ";"))
+    check("en formula has no decimals (1/2 instead of 0.5)", "0.5" not in gs.result_formula(5) and "1/2" in gs.result_formula(5))
+    check("ru formula differs only by «;»", gs.result_formula(5, ";") == gs.result_formula(5).replace(",", ";"))
 
     db.set_settings({"gsheet_times": "0"})
     check("sheet times can be switched off", db.emp_schedule(db.get_employee(K), db.get_schedule())["time"] == "09:00")

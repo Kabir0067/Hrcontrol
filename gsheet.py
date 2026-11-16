@@ -237,26 +237,40 @@ def header_matches(rows: list, key: str) -> bool:
     return good >= dim - 1
 
 
-def result_formula(row1: int) -> str:
+def result_formula(row1: int, sep: str = ",") -> str:
     """«Натиҷа %» — ҳамон ҳисоби корхона, вале дуруст (дар шакли A1, на R1C1):
 
     омадан: то 15 дақ. — 1, то 30 — 0.5; рафтан: на барвақттар аз «Рафтан (брнм)» — 1;
     тақсим ба шумораи ячейкаҳои пур (бе «Рухсатӣ»). «Наомад» = 0.
+
+    sep — ҷудокунандаи аргументҳо: "," (en) ё ";" (ru ва ғ.). Ададҳои касрӣ нест
+    (1/2 ба ҷои 0.5), бинобар ин формула танҳо бо ҳамин аломат фарқ мекунад.
     """
     rng = f"F{row1}:BO{row1}"
     pin = f"IF(ISNUMBER($D{row1}),MOD($D{row1},1),TIMEVALUE($D{row1}))"
     pout = f"IF(ISNUMBER($E{row1}),MOD($E{row1},1),TIMEVALUE($E{row1}))"
     late = f"ROUND(({rng}-{pin})*1440)"
-    return (
+    text = (
         f'=IF($D{row1}="","",IFERROR(('
-        f"SUMPRODUCT(ARRAYFORMULA(ISEVEN(COLUMN({rng}))*IFERROR(ISNUMBER({rng})*(({late}<=15)+0.5*({late}>15)*({late}<=30)),0)))"
+        f"SUMPRODUCT(ARRAYFORMULA(ISEVEN(COLUMN({rng}))*IFERROR(ISNUMBER({rng})*(({late}<=15)+1/2*({late}>15)*({late}<=30)),0)))"
         f"+SUMPRODUCT(ARRAYFORMULA(ISODD(COLUMN({rng}))*IFERROR(ISNUMBER({rng})*(ROUND(({rng}-{pout})*1440)>=0),0)))"
         f')/MAX(1,COUNTA({rng})-COUNTIF({rng},"{TEXT_LEAVE}")),""))'
     )
+    return text if sep == "," else text.replace(",", sep)
 
 
 def _is_our_formula(text: str) -> bool:
     return "ISEVEN(COLUMN(F" in text and "SUMPRODUCT" in text
+
+
+# Забонҳое, ки дар онҳо ададҳо бо вергул навишта мешаванд → аргументҳо бо «;»
+_SEMICOLON_LOCALES = ("ru", "uk", "be", "kk", "ky", "uz", "tg", "az", "tr", "de", "fr", "es", "it",
+                      "pt", "pl", "cs", "nl", "sv", "fi", "da", "nb", "hu", "ro", "bg", "sr", "hr")
+
+
+def formula_sep(locale: str | None) -> str:
+    lang = (locale or "en").split("_")[0].lower()
+    return ";" if lang in _SEMICOLON_LOCALES else ","
 
 
 # ── номҳо: «Кабир Ғафуров (@kabir)» ≈ «Kabir Ghaffurov» ───────────────────
@@ -477,6 +491,7 @@ class Client:
 
     async def meta(self) -> dict:
         return await self.call("GET", "", {"fields": (
+            "properties(locale),"
             "sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)),"
             "developerMetadata(metadataId,metadataKey,metadataValue))")})
 
@@ -666,12 +681,15 @@ class Syncer:
         self.kicked = asyncio.Event()
         self.snapshot: dict | None = None
         self._formulas_ok: set = set()
+        self.locale = ""
+        self._sep = ""                      # ҷудокунандае, ки дар ин ҷадвал санҷида шуд
         self._last_logged = ("", 0.0)
 
     # ── варақҳои моҳҳо ────────────────────────────────────────────────
 
     async def tabs(self) -> list[Tab]:
         meta = await self.client.meta()
+        self.locale = (meta.get("properties") or {}).get("locale") or self.locale
         out = []
         for sh in meta.get("sheets", []):
             p = sh.get("properties", {})
@@ -791,19 +809,34 @@ class Syncer:
         last = max(r.r for r in named) + 1
         current = await self.client.values(tab.title, f"{col_name(C_RESULT)}1:{col_name(C_RESULT)}{last}",
                                            render="FORMULA")
-        reqs = []
+        first = self._sep or formula_sep(self.locale)
+        variants = {result_formula(r.r + 1, x) for r in named for x in (",", ";")}
+
+        def requests(sep: str, only: list[Row]) -> list[dict]:
+            return [{"updateCells": {"range": _range(tab.sheet_id, row.r, C_RESULT), "fields": "userEnteredValue",
+                                     "rows": [{"values": [{"userEnteredValue": {
+                                         "formulaValue": result_formula(row.r + 1, sep)}}]}]}} for row in only]
+
+        todo = []
         for row in named:
             have = str(_get(current, row.r, 0) or "")
-            want = result_formula(row.r + 1)
-            if have == want:
+            if have in variants:
                 continue
             if not have or "R[0]C" in have or _is_our_formula(have):
-                reqs.append({"updateCells": {"range": _range(tab.sheet_id, row.r, C_RESULT),
-                                             "fields": "userEnteredValue",
-                                             "rows": [{"values": [{"userEnteredValue": {"formulaValue": want}}]}]}})
-        if reqs:
-            await self.client.batch(reqs)
-            log.info("📗 «Натиҷа %%»: формула дар %d сатр ислоҳ шуд (%s)", len(reqs), tab.title)
+                todo.append(row)
+        if todo:
+            # Навиштан → санҷидан: агар Google формуларо нафаҳмид (#ERROR!) — ҷудокунандаи дигар
+            for sep in (first, ";" if first == "," else ","):
+                await self.client.batch(requests(sep, todo))
+                shown = await self.client.values(
+                    tab.title, f"{col_name(C_RESULT)}1:{col_name(C_RESULT)}{last}", render="FORMATTED_VALUE")
+                if not any(str(_get(shown, row.r, 0) or "").startswith("#ERROR") for row in todo):
+                    self._sep = sep
+                    break
+            else:
+                self._sep = first
+                log.warning("📗 «Натиҷа %%»: Google формуларо қабул накард (%s)", tab.title)
+            log.info("📗 «Натиҷа %%»: формула дар %d сатр ислоҳ шуд (%s, «%s»)", len(todo), tab.title, self._sep)
         self._formulas_ok.add(stamp)
 
     # ── синхронизатсия ─────────────────────────────────────────────────
