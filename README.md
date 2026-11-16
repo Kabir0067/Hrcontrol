@@ -20,7 +20,30 @@
   - **вақти кории алоҳида:** барои ҳар корманд метавон соат ва рӯзҳои худашро гузошт (масалан, аз 14:00, Дш–Ҷм) —
     савол дар соати ӯ меравад ва «дер» аз ҳамон соат ҳисоб мешавад;
   - касе, ки субҳ «Имрӯз намеоям / Дер мекунам» фиристодааст, савол намегирад — сабаб аз дархост гирифта мешавад.
+  - **🚪 Аз кор рафтам** — пас аз «Омадам» ва дар клавиатураи доимӣ: вақти рафтан қайд мешавад.
 - **Дархостҳо** ба гурӯҳи роҳбарият бо тугмаҳои «Иҷозат / Рад», ёдовариҳо ва санҷиши «расидед?».
+
+### Google Sheet-и корхона («Oficce Out»)
+Давомот худкор ба ҷадвали корхона навишта мешавад — **сохтор, дизайн ва формулаҳои ҷадвал бетағйир**:
+- **як варақ — як моҳ.** Рӯзи 1-уми ҳар моҳ варақи нав худкор сохта мешавад (нусхаи моҳи гузашта:
+  ҳамон кормандон, телефонҳо, «Омадан / Рафтан (брнм)», рангҳо); рӯзҳо ва рӯзҳои ҳафта
+  («1-Якшанбе» …) ва шанбе/якшанбе — мутобиқи моҳи нав, ячейкаҳои рӯзҳо — холӣ. Моҳҳои гузашта мемонанд;
+- **«Омад»** — ҳамон рӯз ба шакли `соат:дақиқа`; ранг мисли ҷадвали корхона: то 15 дақ. дер — сабз,
+  то 30 — зард, зиёдтар — сурх. «Наомад» (сурх) — агар гуфт «наомадам» ё то рӯзи дигар ҷавоб надод;
+  «Рухсатӣ» — аз панел. **«Рафт»** — тугмаи «🚪 Аз кор рафтам» (барвақттар аз «Рафтан (брнм)» — сурх);
+- **«Омадан (брнм)»** — бот маҳз дар ҳамин соат мепурсад «Ба кор омадед?» ва дериро аз он ҳисоб мекунад
+  (дар панел хомӯш карда мешавад);
+- корманд ба сатраш бо сутуни **«Телеграм id»** пайваст мешавад: худкор аз рӯи ном (кирилӣ ↔ лотинӣ,
+  танҳо агар қариб айнан ва ягона бошад) ё дастӣ: *Танзимот → Google Sheet → Пайваст кардан*;
+- бот **танҳо ячейкаи холӣ ё навиштаи худашро** иваз мекунад — навиштаи дастии одамро ҳеҷ гоҳ.
+  Санаҳои пеш аз пайвастшавӣ дахл карда намешаванд. Тоза кардани база ҷадвалро тоза намекунад;
+- «Натиҷа %» — формулаи корхона (R1C1 → `#ERROR!`) ба ҳамон ҳисоб дар шакли дуруст иваз мешавад:
+  омадан ≤15 дақ. — 1, ≤30 — 0.5; рафтан на барвақттар — 1; тақсим ба ячейкаҳои пур (бе «Рухсатӣ»);
+- Google дастрас набошад — бот ва панел мисли пештара кор мекунанд; пас аз барқароршавӣ ҳама навишта мешавад.
+
+**Танзим:** калиди service account — `/etc/hrcontrol/google-sa.json` (сервер) ё `secret/google-sa.json`
+(компютер; ба git намеравад). Ҷадвал → **Share** → email-и калид (`client_email`) → **Editor**.
+`GSHEET_ID` пешфарз — ҷадвали «Oficce Out».
 
 ### Панели веб (Telegram Mini App + браузер; телефон, планшет, компютер; мавзӯи равшан/торик)
 | Бахш | Чӣ ҳаст |
@@ -45,15 +68,16 @@
 | `config.py` | Ҳамаи танзимот (аз `.env` ё муҳити система). Вақт — ҳамеша `Asia/Dushanbe` |
 | `database.py` | SQLite: дархостҳо, давомот, кормандон, рӯзҳои истироҳат, омор, нусхаҳо |
 | `handlers.py` | Бот: равандҳо, тугмаҳо, саволи давомот, ёдовариҳо, ҳисоботи рӯз |
+| `gsheet.py` | Google Sheet: варақи моҳ, синхронизатсия, пайвасти кормандон (RS256 бе китобхонаи нав) |
 | `admin_server.py` | aiohttp API + статикаи панел |
 | `main.py` | Оғоз, назорати зерсистемаҳо, log |
 | `admin_panel/` | Панели веб (HTML/CSS/JS, **бе ягон китобхонаи беруна**) |
 | `deploy/` | systemd, watchdog, nginx, `deploy.sh` |
-| `tests/` | `test_resilience.py`, `test_attendance.py`, `test_admin_api.py` (бе Telegram, бо базаи муваққатӣ) |
+| `tests/` | `test_resilience.py`, `test_attendance.py`, `test_admin_api.py`, `test_gsheet.py` (бе Telegram ва Google, бо базаи муваққатӣ) |
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
-for t in test_resilience test_attendance test_admin_api; do .venv/bin/python tests/$t.py; done
+for t in test_resilience test_attendance test_admin_api test_gsheet; do .venv/bin/python tests/$t.py; done
 .venv/bin/python tests/test_admin_api.py --serve     # панел бо маълумоти намунавӣ: http://127.0.0.1:18901/__dev_login
 ```
 
@@ -72,6 +96,7 @@ for t in test_resilience test_attendance test_admin_api; do .venv/bin/python tes
 | `/opt/hrcontrol` | код (git) + `.venv` | root (барои хидмат — танҳо хондан) |
 | `/var/lib/hrcontrol` | `softclub.db`, `backups/`, `bot.log` | `hrcontrol` (корбари системавӣ) |
 | `/etc/hrcontrol/hrcontrol.env` | сирҳо: `BOT_TOKEN`, `ADMIN_PASS`, `SECRET_KEY` | root:hrcontrol 640 |
+| `/etc/hrcontrol/google-sa.json` | калиди Google Sheet (service account) | root:hrcontrol 640 |
 | `/var/backups/hrcontrol` | **сейф**: `repo.git`, нусхаҳои база (14 рӯз), нусхаи env | root |
 
 - **Хидмат** `hrcontrol.service`: `enabled` (пас аз reboot худаш меояд), `Restart=always`,
@@ -128,7 +153,8 @@ sudo -u hrcontrol /opt/hrcontrol/.venv/bin/python3 -c "import sqlite3; c=sqlite3
 | GET | `/api/overview`, `/api/dashboard`, `/api/analytics?date_from&date_to` | Bearer |
 | GET / POST | `/api/work-schedule` — `{time, days, grace, report}` | Bearer |
 | GET | `/api/attendance/day?date`, `/api/attendance/month?period=YYYY-MM&user_id`, `/api/attendance/stats` | Bearer |
-| POST / DELETE | `/api/attendance` — `{user_id, date, status: present\|absent\|leave, time, reason, eta}`, `/api/attendance/{id}` | Bearer |
+| POST / DELETE | `/api/attendance` — `{user_id, date, status: present\|absent\|leave, time, left, reason, eta}`, `/api/attendance/{id}` | Bearer |
+| GET / POST | `/api/gsheet`, `/api/gsheet/settings` — `{enabled, times, autolink}`, `/api/gsheet/sync`, `/api/gsheet/link` — `{row, name, user_id\|null}` | Bearer |
 | POST | `/api/days-off` — `{date, off, title}` | Bearer |
 | GET / POST | `/api/employees`, `/api/employees/{id}` — `{alias, active, work_time, work_days}` (`null` — мисли ҳама) | Bearer |
 | GET | `/api/requests?type&status&date_from&date_to&q&user_id&sort&limit&offset` | Bearer |

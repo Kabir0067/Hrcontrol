@@ -9,6 +9,7 @@
 #    /opt/hrcontrol                 — код (git), барои хидмат танҳо хондан
 #    /var/lib/hrcontrol             — база, нусхаҳо, log (StateDirectory)
 #    /etc/hrcontrol/hrcontrol.env   — сирҳо (root:hrcontrol 640)
+#    /etc/hrcontrol/google-sa.json  — калиди Google Sheet (root:hrcontrol 640, ихтиёрӣ)
 #    /var/backups/hrcontrol         — сейф: repo.git, нусхаҳои база, нусхаи env
 #
 #  Тартиб: git → код → venv → санҷишҳо → нусхаи база → systemd/nginx →
@@ -47,6 +48,16 @@ install -d -m 750 -o "$APP" -g "$APP" "$DATA" "$DATA/backups"
 [ -s "$ETC/hrcontrol.env" ] || die "$ETC/hrcontrol.env нест. Аз deploy/hrcontrol.env.example созед."
 chown root:"$APP" "$ETC/hrcontrol.env" && chmod 640 "$ETC/hrcontrol.env"
 install -m 600 "$ETC/hrcontrol.env" "$VAULT/hrcontrol.env"
+# Калиди Google (service account) барои ҷадвали корхона — ихтиёрӣ
+if [ -s "$ETC/google-sa.json" ]; then
+    chown root:"$APP" "$ETC/google-sa.json" && chmod 640 "$ETC/google-sa.json"
+    install -m 600 "$ETC/google-sa.json" "$VAULT/google-sa.json"
+elif [ -s "$VAULT/google-sa.json" ]; then
+    install -m 640 -o root -g "$APP" "$VAULT/google-sa.json" "$ETC/google-sa.json"
+    log "google-sa.json аз сейф барқарор шуд"
+else
+    log "огоҳӣ: $ETC/google-sa.json нест — Google Sheet хомӯш мемонад"
+fi
 
 # ── 2. git-mirror дар сейф ─────────────────────────────────────────
 export GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15"
@@ -106,7 +117,7 @@ fi
 
 # ── 5. санҷишҳо (бо базаи муваққатӣ; ба базаи корӣ дахл надоранд) ───
 log "санҷишҳо…"
-for t in test_resilience test_attendance test_admin_api; do
+for t in test_resilience test_attendance test_admin_api test_gsheet; do
     if ! (cd "$CODE" && timeout 300 "$CODE/.venv/bin/python3" "tests/$t.py" > "/tmp/hrcontrol-$t.log" 2>&1); then
         tail -20 "/tmp/hrcontrol-$t.log" >&2
         rollback

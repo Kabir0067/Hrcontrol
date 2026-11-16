@@ -2046,3 +2046,21 @@ td.m-off { background-image: repeating-linear-gradient(135deg, transparent 0 5px
   body { background: #fff; }
   .card, .panel { box-shadow: none; break-inside: avoid; }
 }
+
+/* ══════════════ Google Sheet ══════════════ */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
+.item__out { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-3); text-align: right; }
+.gs-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 12px 0 4px; }
+.gs-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 230px); gap: 10px; align-items: center; padding: 9px 12px; }
+.gs-row + .gs-row { border-top: 1px solid var(--border); }
+.gs-row__n { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.gs-row.is-linked .gs-row__n { color: var(--ok-text); font-weight: 700; }
+.gs-row__main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gs-row__main b { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-row__main small { color: var(--text-3); font-size: 11.8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-row > * { min-width: 0; }
+.gs-row .select { width: 100%; min-width: 0; max-width: 100%; min-height: 36px; padding: 6px 10px; font-size: 13.5px; text-overflow: ellipsis; }
+@media (max-width: 560px) {
+  .gs-row { grid-template-columns: 26px minmax(0, 1fr); row-gap: 6px; }
+  .gs-row .select { grid-column: 2; }
+}

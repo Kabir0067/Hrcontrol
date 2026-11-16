@@ -56,6 +56,9 @@ const ICON = {
   edit: '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
   palm: '<svg viewBox="0 0 24 24"><path d="M12 22V11"/><path d="M12 11C9 7 5 7 3 9c3-1 6 0 9 2Z"/><path d="M12 11c3-4 7-4 9-2-3-1-6 0-9 2Z"/><path d="M12 11c-1-4-4-7-7-7 3 1 5 4 7 7Z"/><path d="M12 11c1-4 4-7 7-7-3 1-5 4-7 7Z"/></svg>',
+  sheet: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M3 9h18M3 15h18M9 9v12M15 9v12"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
+  door: '<svg viewBox="0 0 24 24"><path d="M14 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>',
   tg: '<svg viewBox="0 0 24 24"><path d="m21.5 3.5-19 7.3c-1 .4-1 1.8.1 2.1l4.6 1.5 1.8 5.6c.3.9 1.4 1.1 2 .4l2.6-2.7 4.9 3.6c.8.6 2 .2 2.2-.8L23 5c.2-1.1-.8-1.9-1.5-1.5Z"/><path d="m7.3 14.3 9.5-6.8"/></svg>',
 };
 
@@ -1187,7 +1190,7 @@ function renderAttDay() {
     }
     if (c && it.custom) sub = [`оғози кор ${it.start}`, sub].filter(Boolean).join(' · ');
     const time = c && c.t
-      ? `<span class="item__time">${c.t}</span>${c.late ? pill(`дер ${fmtMinutes(c.late)}`, 'warn') : pill('сари вақт', 'ok')}`
+      ? `<span class="item__time">${c.t}${c.out ? `<small class="item__out" title="Рафт">→ ${c.out}</small>` : ''}</span>${c.late ? pill(`дер ${fmtMinutes(c.late)}`, 'warn') : pill('сари вақт', 'ok')}`
       : attPill(c ? c.s : 'none');
     return `<button class="item" data-att-row="${i}">
       ${avatar(it.name, it.user_id, it.active ? '' : 'is-off')}
@@ -1323,6 +1326,7 @@ function openAttEdit(userId, name, date, cell, onDone) {
   const rows = cell ? [
     ['Ҳолат', ATT[cell.s].label],
     cell.t ? ['Вақти омадан', cell.t + (cell.late ? ` (+${fmtMinutes(cell.late)})` : '')] : null,
+    cell.out ? ['Вақти рафтан', cell.out] : null,
     cell.sched && cell.sched !== '00:00' ? ['Оғози кор', cell.sched] : null,
     cell.reason ? ['Сабаб', cell.reason] : null,
     cell.eta ? ['Кай меояд', cell.eta] : null,
@@ -1352,8 +1356,11 @@ function openAttEdit(userId, name, date, cell, onDone) {
     const f = $('#ae-fields');
     $$('#ae-choice [data-mode]').forEach((b) => b.classList.toggle('is-active', b.dataset.mode === mode));
     if (mode === 'present') {
-      f.innerHTML = `<label class="field"><span class="field__label">Вақти омадан</span>
-        <input class="input" id="ae-time" type="time" value="${esc((cell && cell.t) || (cell && cell.sched !== '00:00' && cell.sched) || startOf(userId) || sch.time || '08:00')}"></label>`;
+      f.innerHTML = `<div class="account-form__row">
+        <label class="field"><span class="field__label">Вақти омадан</span>
+          <input class="input" id="ae-time" type="time" value="${esc((cell && cell.t) || (cell && cell.sched !== '00:00' && cell.sched) || startOf(userId) || sch.time || '08:00')}"></label>
+        <label class="field"><span class="field__label">Вақти рафтан (ихтиёрӣ)</span>
+          <input class="input" id="ae-left" type="time" value="${esc((cell && cell.out) || '')}"></label></div>`;
     } else if (mode === 'absent') {
       f.innerHTML = `<label class="field"><span class="field__label">Сабаб</span>
           <input class="input" id="ae-reason" type="text" maxlength="300" value="${esc((cell && cell.reason) || '')}" placeholder="Масалан: бемор аст"></label>
@@ -1374,7 +1381,7 @@ function openAttEdit(userId, name, date, cell, onDone) {
   });
   $('#ae-save').addEventListener('click', async () => {
     const body = { user_id: userId, date, status: mode };
-    if (mode === 'present') body.time = $('#ae-time').value;
+    if (mode === 'present') { body.time = $('#ae-time').value; body.left = $('#ae-left').value; }
     if ($('#ae-reason')) body.reason = $('#ae-reason').value.trim();
     if ($('#ae-eta')) body.eta = $('#ae-eta').value.trim();
     const btn = $('#ae-save');
@@ -1780,7 +1787,7 @@ async function openEmployee(uid, period = '') {
       <div class="setting"><div class="setting__text"><b>Саволи ҳаррӯзаи давомот</b><small>${d.active ? 'Ҳар рӯзи корӣ мепурсад «Ба кор омадед?»' : 'Хомӯш — ба ӯ савол намеравад'}</small></div>
         <label class="switch"><input type="checkbox" id="emp-active" ${d.active ? 'checked' : ''}><span></span></label></div>
       <div class="setting"><div class="setting__text"><b>Вақти корӣ</b><small>${d.schedule && d.schedule.custom
-          ? `<span class="pill pill--violet" style="margin-right:6px">алоҳида</span>${esc(d.schedule.time || '—')} · ${esc(daysText(d.schedule.days))}`
+          ? `<span class="pill pill--violet" style="margin-right:6px">${d.schedule.source === 'sheet' ? 'аз Google Sheet' : 'алоҳида'}</span>${esc(d.schedule.time || '—')}${d.schedule.sheet_leave ? '–' + esc(d.schedule.sheet_leave) : ''} · ${esc(daysText(d.schedule.days))}`
           : `Мисли ҳама: ${esc((d.schedule && d.schedule.time) || 'гузошта нашудааст')} · ${esc(daysText(d.schedule && d.schedule.days))}`}</small></div>
         <button class="btn btn--ghost btn--sm" id="emp-sched">${ICON.clock} Иваз</button></div>
       <div class="setting"><div class="setting__text"><b>Ном дар панел</b><small>${d.alias ? esc(d.alias) : 'Мисли Telegram'}</small></div>
@@ -1876,6 +1883,7 @@ async function openEmpSchedule(d, done) {
   openSheet(`
     <div class="sheet__title">Вақти кории ${esc(shortName(d.name))}</div>
     ${g.enabled ? '' : '<div class="alert alert--warn small">Саволи ҳаррӯза ҳоло хомӯш аст. Аввал дар «Давомот» вақти кори умумиро гузоред.</div>'}
+    ${d.schedule && d.schedule.source === 'sheet' ? `<div class="alert alert--info small">Вақти омадани ӯ аз Google Sheet гирифта мешавад: <b>${esc(d.schedule.time)}</b> («Омадан (брнм)»). Барои иваз кардани соат — онро дар ҷадвал иваз кунед. Ин ҷо рӯзҳои кориро интихоб карда метавонед.</div>` : ''}
     <div class="seg seg--block" id="es-mode">
       <button data-custom="0">Мисли ҳама</button>
       <button data-custom="1">Вақти алоҳида</button>
@@ -2187,9 +2195,10 @@ async function initSettings() {
   Promise.all([
     api('/api/account'), 
     api('/api/health', { quiet: true }), 
-    api('/api/backups', { quiet: true }), 
-    api('/api/work-schedule', { quiet: true })
-  ]).then(([acc, health, backups, sch]) => {
+    api('/api/backups', { quiet: true }),
+    api('/api/work-schedule', { quiet: true }),
+    api('/api/gsheet', { quiet: true })
+  ]).then(([acc, health, backups, sch, gs]) => {
     if (!acc) return;
     if (sch) S.schedule = sch;
     const theme = document.documentElement.dataset.theme;
@@ -2228,6 +2237,8 @@ async function initSettings() {
             </div>
           </div>
         </section>
+
+        <section class="panel" id="gs-panel">${gs ? gsPanelHtml(gs) : ''}</section>
 
         <section class="panel">
           <div class="panel__head">
@@ -2308,6 +2319,7 @@ async function initSettings() {
       </div>`;
 
     bindEyes(root);
+    if (gs) bindGsPanel(gs); else $('#gs-panel').remove();
     root.querySelector('[data-open-schedule]').addEventListener('click', openSchedule);
     $('#acc-form').addEventListener('submit', saveAccount);
     $('#set-backup').addEventListener('click', () => download('/api/backup.db'));
@@ -2321,6 +2333,145 @@ async function initSettings() {
     $('#wipe-req').addEventListener('click', () => doWipe('requests'));
     $('#wipe-all').addEventListener('click', () => doWipe('all'));
   });
+}
+
+/* ══════════════ GOOGLE SHEET ══════════════ */
+
+function gsStatus(g) {
+  const st = g.status || {};
+  if (!g.configured) return { tag: 'tag--warn', label: 'Танзим нашуда', text: st.error || 'Калиди Google дар сервер гузошта нашудааст' };
+  if (!g.enabled) return { tag: '', label: 'Хомӯш', text: 'Давомот ба ҷадвал навишта намешавад' };
+  if (st.ok === false) return { tag: 'tag--danger', label: 'Хато', text: st.error || 'Google ҷавоб надод' };
+  if (st.ok) return { tag: 'tag--ok', label: 'Пайваст', text: `Охирин навсозӣ ${fmtRelative(st.last_ok)} · варақи «${g.tab || st.tab}»` };
+  return { tag: '', label: 'Интизорӣ', text: 'Бо Google пайваст мешавад…' };
+}
+
+function gsPanelHtml(g) {
+  const s = gsStatus(g);
+  const st = g.status || {};
+  const rows = (g.rows || []).filter((r) => r.name);
+  const linked = rows.filter((r) => r.user_id).length;
+  const unl = (g.unlinked || []).length;
+  const live = g.configured && g.enabled;
+  return `
+    <div class="panel__head">
+      <div class="panel__ico">${ICON.sheet}</div>
+      <div class="panel__title"><h2>Google Sheet</h2><p>Ҷадвали давомоти корхона · ҳар моҳ варақи нав</p></div>
+      <span class="tag ${s.tag}">${esc(s.label)}</span>
+    </div>
+    <div class="panel__body">
+      ${live && st.ok === false ? `<div class="alert alert--danger small" style="margin-top:12px">${esc(s.text)}${g.email && /403/.test(st.error || '') ? `<span class="mono" style="display:block;margin-top:6px">${esc(g.email)}</span>` : ''}</div>` : ''}
+      <div class="rowset">
+        <div class="rowset__text"><b>Ҳолат</b><small>${esc(s.text)}${live && st.writes ? ` · ${st.writes} ячейка навишта шуд` : ''}${live && st.conflicts ? ` · ${st.conflicts} ячейкаи дастӣ бетағйир монд` : ''}</small></div>
+        <button class="btn btn--ghost btn--sm" id="gs-sync" ${live ? '' : 'disabled'}>${ICON.refresh} Ҳозир навсозӣ</button>
+      </div>
+      <div class="rowset">
+        <div class="rowset__text"><b>Кормандон дар ҷадвал</b><small>${rows.length ? `${linked} аз ${rows.length} сатр ба бот пайваст` : 'Ҷадвал ҳанӯз хонда нашудааст'}${unl ? ` · ${unl} корманди бот пайваст нест` : ''}</small></div>
+        <button class="btn ${rows.length && linked < rows.length ? 'btn--primary' : 'btn--ghost'} btn--sm" id="gs-links" ${rows.length ? '' : 'disabled'}>${ICON.team} Пайваст кардан</button>
+      </div>
+      <div class="rowset">
+        <div class="rowset__text"><b>Навиштан ба ҷадвал</b><small>Вақти омадан ва рафтан ҳамон лаҳза ба варақи моҳ меравад</small></div>
+        <label class="switch"><input type="checkbox" data-gs="enabled" ${g.enabled ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
+      </div>
+      <div class="rowset">
+        <div class="rowset__text"><b>Вақти омадан аз ҷадвал</b><small>Бот дар соати «Омадан (брнм)»-и ҳар корманд мепурсад ва дериро аз ҳамон ҳисоб мекунад</small></div>
+        <label class="switch"><input type="checkbox" data-gs="times" ${g.times ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
+      </div>
+      <div class="rowset">
+        <div class="rowset__text"><b>Пайвасти худкор аз рӯи ном</b><small>Агар номи корманд дар Telegram ва дар ҷадвал қариб якхела бошад</small></div>
+        <label class="switch"><input type="checkbox" data-gs="autolink" ${g.autolink ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
+      </div>
+      <p class="panel__note">Бот танҳо ячейкаи холӣ ё навиштаи худашро иваз мекунад — навиштаи дастӣ ҳеҷ гоҳ вайрон намешавад.${g.since ? ` Аз ${esc(fmtDateShort(g.since))} навишта мешавад.` : ''}
+        ${g.url ? `<a href="${esc(g.url)}" target="_blank" rel="noopener" id="gs-open">Кушодани ҷадвал ↗</a>` : ''}</p>
+    </div>`;
+}
+
+function renderGsPanel(g) {
+  const box = $('#gs-panel');
+  if (!box) return;
+  box.innerHTML = gsPanelHtml(g);
+  bindGsPanel(g);
+}
+
+function bindGsPanel(g) {
+  const box = $('#gs-panel');
+  if (!box) return;
+  const sync = $('#gs-sync', box);
+  if (sync) sync.addEventListener('click', async () => {
+    sync.classList.add('is-loading');
+    const res = await post('/api/gsheet/sync', {}, { raw: true, quiet: true });
+    sync.classList.remove('is-loading');
+    if (!res) { toast('Алоқа нест', 'danger'); return; }
+    if (res.error) { haptic('error'); toast(res.error, 'danger'); } else { haptic('success'); toast(res.message, 'ok'); }
+    const fresh = res.error ? await api('/api/gsheet', { quiet: true }) : res;
+    if (fresh && fresh.rows) renderGsPanel(fresh);
+  });
+  const links = $('#gs-links', box);
+  if (links) links.addEventListener('click', () => openSheetLinks(g));
+  $$('[data-gs]', box).forEach((input) => input.addEventListener('change', async () => {
+    const res = await post('/api/gsheet/settings', { [input.dataset.gs]: input.checked }, { raw: true, quiet: true });
+    if (!res || res.error) { input.checked = !input.checked; toast((res && res.error) || 'Сабт нашуд', 'danger'); return; }
+    haptic('success');
+    toast(res.message, 'ok');
+    renderGsPanel(res);
+    if (input.dataset.gs === 'times') refreshAttViewsQuiet();
+  }));
+  const open = $('#gs-open', box);
+  if (open && tg && tg.openLink) open.addEventListener('click', (e) => { e.preventDefault(); try { tg.openLink(g.url); } catch (_) { window.open(g.url, '_blank'); } });
+}
+
+/** Пайвасти кормандони бот ба сатрҳои ҷадвал (сутуни «Телеграм id»). */
+function openSheetLinks(g) {
+  const draw = (state) => {
+    const rows = (state.rows || []).filter((r) => r.name);
+    const emps = state.employees || [];
+    const used = new Map(rows.filter((r) => r.user_id).map((r) => [r.user_id, r.row]));
+    const list = rows.map((r) => {
+      const sugg = r.suggest || [];
+      const sugIds = new Set(sugg.map((s) => s.user_id));
+      const options = ['<option value="">— пайваст нест —</option>']
+        .concat(sugg.map((s) => `<option value="${s.user_id}">★ ${esc(shortName(s.name))} · ${Math.round(s.score * 100)}%</option>`))
+        .concat(emps.filter((e) => !sugIds.has(e.user_id) && (e.active || e.user_id === r.user_id)).map((e) =>
+          `<option value="${e.user_id}" ${e.user_id === r.user_id ? 'selected' : ''}>${esc(shortName(e.name))}${used.has(e.user_id) && e.user_id !== r.user_id ? ` · сатри ${used.get(e.user_id)}` : ''}</option>`));
+      const plan = r.plan_in ? `${r.plan_in}${r.plan_out ? '–' + r.plan_out : ''}` : 'вақт нест';
+      const note = r.user_id ? `<span style="color:var(--ok-text)">пайваст</span>`
+        : r.dup ? `<span style="color:var(--danger-text)">ID ${esc(r.tg)} дар 2 сатр</span>`
+          : r.unknown ? `ID ${esc(r.tg)} — ҳанӯз ба бот /start накардааст`
+            : sugg.length ? `пешниҳод: ${esc(shortName(sugg[0].name))}` : 'пайваст нест';
+      return `<div class="gs-row${r.user_id ? ' is-linked' : ''}">
+        <span class="gs-row__n">${r.row}</span>
+        <span class="gs-row__main"><b>${esc(r.name)}</b><small>${esc(plan)} · ${note}</small></span>
+        <select class="select" data-row="${r.row}" data-name="${esc(r.name)}" aria-label="Корманди бот барои ${esc(r.name)}">${options.join('')}</select>
+      </div>`;
+    }).join('');
+    const unl = state.unlinked || [];
+    $('#sheet-body').innerHTML = `
+      <div class="sheet__title">Кормандон дар ҷадвал</div>
+      <p class="sheet__text">Барои ҳар сатри варақи «${esc(state.tab || '')}» корманди ботро интихоб кунед. Telegram ID ба сутуни «Телеграм id» навишта мешавад ва аз ҳамин лаҳза вақти омадан ба ҳамин сатр меравад.</p>
+      <div class="gs-list">${list || '<div class="card__body">' + emptyState('Дар ҷадвал корманд нест') + '</div>'}</div>
+      ${unl.length ? `<div class="section-title">Дар бот ҳастанд, дар ҷадвал не · ${unl.length}</div>
+        <p class="sheet__text small">${unl.map((u) => esc(shortName(u.name))).join(' · ')}</p>
+        <p class="panel__note">Агар ин кормандон бояд дар ҷадвал бошанд, барояшон дар ҷадвал сатр илова кунед (номи корманд, вақтҳо) ва баъд ин ҷо интихоб кунед.</p>` : ''}`;
+    $$('#sheet-body select[data-row]').forEach((sel) => sel.addEventListener('change', async () => {
+      sel.disabled = true;
+      const body = { row: Number(sel.dataset.row), name: sel.dataset.name, user_id: sel.value ? Number(sel.value) : null };
+      const res = await post('/api/gsheet/link', body, { raw: true, quiet: true });
+      if (!res || res.error) {
+        haptic('error');
+        toast((res && res.error) || 'Алоқа нест', 'danger');
+        const fresh = await api('/api/gsheet', { quiet: true });
+        if (fresh && fresh.rows) { g = fresh; draw(fresh); renderGsPanel(fresh); } else sel.disabled = false;
+        return;
+      }
+      haptic('success');
+      toast(res.message, 'ok');
+      draw(res);
+      renderGsPanel(res);
+      g = res;
+    }));
+  };
+  openSheet(skel(4), { wide: true });
+  draw(g);
 }
 
 async function saveAccount(e) {

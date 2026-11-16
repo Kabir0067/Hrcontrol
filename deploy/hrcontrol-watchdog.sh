@@ -5,6 +5,7 @@
 #  Ҳар чизеро, ки вайрон ё нест шудааст, худаш барқарор мекунад:
 #    1. корбари системавии hrcontrol
 #    2. сирҳо  /etc/hrcontrol/hrcontrol.env      ← сейф (/var/backups/hrcontrol)
+#              /etc/hrcontrol/google-sa.json     ← сейф (калиди Google Sheet)
 #    3. код    /opt/hrcontrol                    ← git-mirror дар сейф
 #       venv   /opt/hrcontrol/.venv              ← pip аз requirements.txt
 #    4. файлҳои systemd                          ← аз код
@@ -49,6 +50,15 @@ if [ ! -s "$ETC/hrcontrol.env" ] && [ -s "$VAULT/hrcontrol.env" ]; then
     restart=1
 elif [ -s "$ETC/hrcontrol.env" ] && ! cmp -s "$ETC/hrcontrol.env" "$VAULT/hrcontrol.env"; then
     install -m 600 "$ETC/hrcontrol.env" "$VAULT/hrcontrol.env"
+fi
+# калиди Google Sheet
+if [ ! -s "$ETC/google-sa.json" ] && [ -s "$VAULT/google-sa.json" ]; then
+    install -d -m 750 -o root -g "$APP" "$ETC"
+    install -m 640 -o root -g "$APP" "$VAULT/google-sa.json" "$ETC/google-sa.json"
+    log "google-sa.json нест шуда буд → аз сейф барқарор шуд"
+    restart=1
+elif [ -s "$ETC/google-sa.json" ] && ! cmp -s "$ETC/google-sa.json" "$VAULT/google-sa.json"; then
+    install -m 600 "$ETC/google-sa.json" "$VAULT/google-sa.json"
 fi
 
 # 3. код ва venv

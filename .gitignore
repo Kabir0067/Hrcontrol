@@ -1,5 +1,6 @@
 # Secrets / runtime state — never commit
 .env
+secret/
 *.db
 *.db-wal
 *.db-shm

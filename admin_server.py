@@ -9,7 +9,8 @@ SoftClub / Hrcontrol — сервери панели маъмурият (aiohttp
     пас аз иваз ҳамаи сессияҳои кӯҳна беэътибор мешаванд;
   • давомот: вақти корӣ, ҷадвали рӯз ва моҳи корӣ (5 → 4), ислоҳи дастӣ, CSV;
   • нест кардан бе рамз — вале ҳамеша пас аз нусхаи эҳтиётии худкор;
-  • омори муфассал ва экспорти CSV.
+  • омори муфассал ва экспорти CSV;
+  • Google Sheet-и корхона: ҳолат, пайвасти кормандон ба сатрҳо, навсозии фаврӣ.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from aiohttp import web
 
 import config as cfg
 import database as db
+import gsheet
 
 log = logging.getLogger("SoftClubBot")
 
@@ -340,6 +342,7 @@ async def handle_health(request: web.Request) -> web.Response:
     }
     # Ҳолати диск — танҳо барои панели воридшуда (барои мониторинги беруна лозим нест)
     if _auth(request):
+        data["sheets"] = {k: gsheet.STATE.get(k) for k in ("configured", "enabled", "ok", "error", "last_ok")}
         try:
             usage = shutil.disk_usage("/")
             data["disk"] = {
@@ -595,9 +598,11 @@ async def handle_attendance_set(request: web.Request) -> web.Response:
     status = str(data.get("status", ""))
     if day > cfg.today_str() and status != "leave":
         return _err("Барои рӯзҳои оянда танҳо «рухсатӣ» гузоштан мумкин аст")
+    extra = {"left": str(data.get("left") or "")} if "left" in data else {}
     cell = db.admin_set_attendance(
         _int(data.get("user_id")), day, status,
-        clock=data.get("time"), reason=data.get("reason"), eta=data.get("eta"))
+        clock=data.get("time"), reason=data.get("reason"), eta=data.get("eta"), **extra)
+    gsheet.kick()
     return _json({"ok": True, "cell": cell, "message": "Сабт шуд"})
 
 
@@ -605,6 +610,7 @@ async def handle_attendance_set(request: web.Request) -> web.Response:
 async def handle_attendance_delete(request: web.Request) -> web.Response:
     if not db.delete_attendance(_int(request.match_info["att_id"])):
         return _err("Сабт ёфт нашуд", 404)
+    gsheet.kick()
     return _json({"ok": True, "message": "Сабт нест шуд"})
 
 
@@ -684,6 +690,57 @@ async def handle_message(request: web.Request) -> web.Response:
     import handlers
     ok, note = await handlers.send_worker_message(BOT, req_id, text[:2000], "Панели маъмурият")
     return _json({"ok": ok, "message": note}, 200 if ok else 409)
+
+
+# ── Google Sheet ──────────────────────────────────────────────────────
+
+@_guard
+async def handle_gsheet(request: web.Request) -> web.Response:
+    return _json(gsheet.panel_state())
+
+
+@_guard
+async def handle_gsheet_settings(request: web.Request) -> web.Response:
+    data = await _body(request)
+    values = {}
+    for field, key in (("enabled", "gsheet_enabled"), ("times", "gsheet_times"),
+                       ("autolink", "gsheet_autolink")):
+        if field in data:
+            values[key] = "1" if data.get(field) else "0"
+    if not values:
+        return _err("Чизе иваз нашуд")
+    db.set_settings(values)
+    gsheet.kick()
+    return _json({"ok": True, **gsheet.panel_state(), "message": "Сабт шуд"})
+
+
+@_guard
+async def handle_gsheet_sync(request: web.Request) -> web.Response:
+    try:
+        result = await gsheet.sync_now()
+    except (gsheet.SheetsError, asyncio.TimeoutError) as exc:
+        return _json({"error": str(exc) or "Google ҷавоб надод", **gsheet.panel_state()}, 502)
+    message = (f"Ҷадвал навсозӣ шуд: {result['writes']} ячейка" if result.get("writes")
+               else "Ҷадвал навсозӣ шуд — ҳама чиз мувофиқ аст")
+    return _json({"ok": True, **gsheet.panel_state(), "message": message})
+
+
+@_guard
+async def handle_gsheet_link(request: web.Request) -> web.Response:
+    data = await _body(request)
+    row = _int(data.get("row"))
+    name = str(data.get("name") or "")
+    uid = _int(data.get("user_id")) or None
+    if row < 5 or not name:
+        return _err("Сатри ҷадвал нодуруст аст")
+    if uid and not db.get_employee(uid):
+        return _err("Корманд ёфт нашуд", 404)
+    try:
+        await gsheet.link(row, name, uid)
+    except (gsheet.SheetsError, asyncio.TimeoutError) as exc:
+        return _json({"error": str(exc) or "Google ҷавоб надод", **gsheet.panel_state()}, 502)
+    return _json({"ok": True, **gsheet.panel_state(),
+                  "message": "Пайваст шуд" if uid else "Пайваст бекор шуд"})
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -858,11 +915,12 @@ async def handle_attendance_export(request: web.Request) -> web.Response:
     w.writerow(["Шартҳо: 08:25 — сари вақт; 08:47 (+17) — дер (дақиқа); Н — наомад; "
                 "Р — рухсатӣ; ? — ҷавоб надод; — — рӯзи истироҳат"])
     w.writerow([])
-    w.writerow(["Сана", "Корманд", "Ҳолат", "Оғози кор", "Вақти омадан", "Дер (дақ.)", "Сабаб", "Кай меояд", "Манбаъ"])
+    w.writerow(["Сана", "Корманд", "Ҳолат", "Оғози кор", "Вақти омадан", "Дер (дақ.)", "Вақти рафтан",
+                "Сабаб", "Кай меояд", "Манбаъ"])
     for emp in data["employees"]:
         for day, cell in sorted(emp["cells"].items()):
             w.writerow([day, emp["name"], _STATE_TG.get(cell["s"], cell["s"]), cell["sched"], cell["t"],
-                        cell["late"] or "", cell["reason"], cell["eta"],
+                        cell["late"] or "", cell.get("out") or "", cell["reason"], cell["eta"],
                         {"bot": "бот", "admin": "админ", "request": "дархост"}.get(cell["src"], cell["src"])])
     return _csv_response(buf, f"davomot-{data['period']['key']}.csv")
 
@@ -931,6 +989,11 @@ def build_app() -> web.Application:
     r.add_post("/api/attendance", handle_attendance_set)
     r.add_delete("/api/attendance/{att_id:\\d+}", handle_attendance_delete)
     r.add_post("/api/days-off", handle_day_off)
+
+    r.add_get("/api/gsheet", handle_gsheet)
+    r.add_post("/api/gsheet/settings", handle_gsheet_settings)
+    r.add_post("/api/gsheet/sync", handle_gsheet_sync)
+    r.add_post("/api/gsheet/link", handle_gsheet_link)
 
     r.add_get("/api/employees", handle_employees)
     r.add_post("/api/employees/{user_id:\\d+}", handle_employee_update)

@@ -5,6 +5,8 @@ SoftClub / Hrcontrol — нуқтаи оғоз.
   • ҳар як зерсистема (polling, ҳалқаи ёдоварӣ, сервери веб) ҷудогона назорат
     мешавад — агар яке афтад, дигарон кор мекунанд ва афтода аз нав мебарояд;
   • log бо ротация (диск пур намешавад);
+  • Google Sheet-и корхона — зерсистемаи алоҳида: агар Google дастрас набошад,
+    бот ва панел мисли пештара кор мекунанд;
   • хомӯшшавии осоишта бо SIGTERM (systemd restart) — ҳатман дар ≤10 сония;
   • «набзи» polling (вақти охирин getUpdates-и муваффақ) — /api/health?strict=1
     онро месанҷад ва watchdog боти овезоншударо restart мекунад.
@@ -26,6 +28,7 @@ from telebot.types import BotCommand
 
 import config as cfg
 import database as db
+import gsheet
 from admin_server import start_admin_server
 from handlers import (
     daily_backup,
@@ -179,6 +182,11 @@ async def web_task() -> None:
     await start_admin_server(bot)
 
 
+async def sheets_task() -> None:
+    """Google Sheet-и корхона: давомот → ҷадвал (мустақил; хатои Google ботро бознамедорад)."""
+    await gsheet.run_forever()
+
+
 def _is_stopping() -> bool:
     if _stopping:
         return True
@@ -295,6 +303,7 @@ async def main() -> int:
         asyncio.create_task(supervise("polling", polling_task), name="polling"),
         asyncio.create_task(supervise("scheduler", scheduler_task), name="scheduler"),
         asyncio.create_task(supervise("web", web_task), name="web"),
+        asyncio.create_task(supervise("sheets", sheets_task), name="sheets"),
     ]
 
     try:

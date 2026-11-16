@@ -138,6 +138,8 @@ WEEKDAYS = ["душанбе", "сешанбе", "чоршанбе", "панҷш�
 MONTHS_GEN = ["январ", "феврал", "март", "апрел", "май", "июн", "июл", "август",
               "сентябр", "октябр", "ноябр", "декабр"]
 
+LEFT_BUTTON = "🚪 Аз кор рафтам"
+
 STATUS_WORD = {
     "pending": "⏳ Интизори ҷавоб",
     "accepted": "✅ Иҷозат дода шуд",
@@ -219,7 +221,7 @@ def _main_reply_kb(admin: bool = False) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="Интихоб кунед…")
     if admin:
         kb.row(KeyboardButton("🛡 Панели идора", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
-    kb.row(KeyboardButton("📝 Дархости нав"))
+    kb.row(KeyboardButton("📝 Дархости нав"), KeyboardButton(LEFT_BUTTON))
     kb.row(KeyboardButton("📋 Дархостҳои ман"), KeyboardButton("ℹ️ Кӯмак"))
     return kb
 
@@ -323,6 +325,19 @@ def _kb_att_arrived(attendance_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("✅ Ман омадам", callback_data=f"att:arr:{attendance_id}"))
     return kb
+
+
+def _kb_att_left(attendance_id: int) -> InlineKeyboardMarkup:
+    """Пас аз «омадам»: вақте ки аз кор меравед — як пахш (сутуни «Рафт» дар ҷадвал)."""
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton(LEFT_BUTTON, callback_data=f"att:out:{attendance_id}"))
+    return kb
+
+
+def _left_text(rec: dict) -> str:
+    clock = _clock(rec.get("left_at"))
+    return (f"🚪 <b>Қайд шуд.</b> Соати <b>{clock}</b> аз кор рафтед.\n\n"
+            "Ташаккур барои кор! То пагоҳ 👋")
 
 
 def _kb_admin_decision(req_id: int) -> InlineKeyboardMarkup:
@@ -432,6 +447,7 @@ def _help_text(admin: bool = False) -> str:
         "Ҳар рӯзи корӣ, вақте кор сар мешавад, бот мепурсад: «Ба кор омадед?»\n"
         "• <b>✅ Омадам</b> — вақти омадан қайд мешавад\n"
         "• <b>❌ Наомадам</b> — мегӯед чаро ва кай меоед\n"
+        f"• <b>{LEFT_BUTTON}</b> — вақте аз кор меравед, пахш кунед\n"
         "Рӯзҳои истироҳат савол намеояд.\n\n"
         "<b>2. Дархост ба роҳбарият</b>\n"
         "«📝 Дархости нав»-ро пахш кунед ва интихоб кунед:\n"
@@ -1218,12 +1234,27 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             late = _late_note(rec)
             await _safe(bot.answer_callback_query(call.id, "✅ Қайд шуд"))
             await _safe(bot.edit_message_text(
-                f"✅ <b>Қайд шуд.</b> Соати <b>{clock}</b> омадед{late}.\n\nКори хуб! ☀️",
-                chat_id=chat_id, message_id=mid))
+                f"✅ <b>Қайд шуд.</b> Соати <b>{clock}</b> омадед{late}.\n\nКори хуб! ☀️\n"
+                f"<i>Вақте аз кор меравед, «{LEFT_BUTTON}»-ро пахш кунед.</i>",
+                chat_id=chat_id, message_id=mid, reply_markup=_kb_att_left(attendance_id)))
             if was_absent:
                 await _safe(bot.send_message(
                     GROUP_ID,
                     f"🟢 <b>{_esc(_short_name(rec['name']))}</b> ба кор омад — <b>{clock}</b>{late}"))
+            return
+
+        if action == "out":
+            result, rec = db.attendance_mark_left(call.from_user.id)
+            if result == "not_present" or not rec or rec["id"] != attendance_id:
+                await _safe(bot.answer_callback_query(call.id, "Имрӯз омадани шумо қайд нашудааст"))
+                return
+            if result == "already":
+                await _safe(bot.answer_callback_query(
+                    call.id, f"Рафтани шумо соати {_clock(rec.get('left_at'))} қайд шуда буд"))
+                await _safe(bot.edit_message_reply_markup(chat_id=chat_id, message_id=mid, reply_markup=None))
+                return
+            await _safe(bot.answer_callback_query(call.id, "🚪 Қайд шуд"))
+            await _safe(bot.edit_message_text(_left_text(rec), chat_id=chat_id, message_id=mid))
             return
 
         if action == "n":
@@ -1348,8 +1379,9 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                 await _safe(bot.answer_callback_query(call.id, "Шумо аллакай ҷавоб додед"))
                 return
             db.update_worker_confirmation(check["request_id"], "yes")
+            att = None
             try:                                  # давомоти имрӯз: «омад» бо вақти воқеӣ
-                db.attendance_mark_arrived(call.from_user.id)
+                att = db.attendance_mark_arrived(call.from_user.id)
             except Exception as exc:
                 log.error("Давомот (arrival #%d): %s", check_id, exc)
             await _safe(bot.answer_callback_query(call.id, "✅ Хуш омадед!"))
@@ -1358,6 +1390,7 @@ def register_handlers(bot: AsyncTeleBot) -> None:
                 f"Роҳбарият медонад, ки соати <b>{clock}</b> расидед.\n"
                 "Кори хуб! ✨",
                 chat_id=call.message.chat.id, message_id=call.message.message_id,
+                reply_markup=_kb_att_left(att["id"]) if att else None,
             ))
             await _safe(bot.send_message(
                 GROUP_ID,
@@ -1423,6 +1456,21 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             return
         if text.startswith("ℹ️"):
             await _safe(bot.send_message(message.chat.id, _help_text(await is_group_admin(uid))))
+            return
+        if text.startswith("🚪"):
+            db.clear_state(uid)
+            result, rec = db.attendance_mark_left(uid)
+            if result == "ok":
+                await _safe(bot.send_message(message.chat.id, _left_text(rec)))
+            elif result == "already":
+                await _safe(bot.send_message(
+                    message.chat.id,
+                    f"ℹ️ Рафтани шумо имрӯз соати <b>{_clock(rec.get('left_at'))}</b> қайд шуда буд."))
+            else:
+                await _safe(bot.send_message(
+                    message.chat.id,
+                    "ℹ️ Имрӯз омадани шумо ба кор қайд нашудааст.\n"
+                    "Аввал ба саволи «Ба кор омадед?» ҷавоб диҳед."))
             return
 
         if step == "reason_text":

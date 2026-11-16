@@ -19,8 +19,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 APP_NAME = "SoftClub HR Control"
-VERSION = "4.2.0"
-BUILD = "2026102601"          # барои cache-busting дар панел
+VERSION = "4.3.0"
+BUILD = "2026111601"          # барои cache-busting дар панел
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -132,6 +132,28 @@ DEFAULT_GRACE = _i("DEFAULT_GRACE", 10)                # то ин қадар д
 
 # Нусхаи ҳаррӯзаи база ба ин чат (ихтиёрӣ; 0 — хомӯш).
 BACKUP_CHAT_ID = _i("BACKUP_CHAT_ID", 0)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+#  Google Sheet — ҷадвали давомоти корхона («Oficce Out»)
+# ──────────────────────────────────────────────────────────────────────────
+
+# ID-и ҷадвал (аз суроғаи docs.google.com/spreadsheets/d/<ID>/edit). "" — хомӯш.
+GSHEET_ID = _s("GSHEET_ID", "1NN6XhDDYeMVCOGZRMppZq3KbE9TmImiQu7vRCbJ24D8")
+
+
+def _default_key_file() -> str:
+    # Сервер: /etc/hrcontrol (берун аз код); компютер: secret/ дар папкаи лоиҳа (ба git намеравад)
+    for path in ("/etc/hrcontrol/google-sa.json", str(BASE_DIR / "secret" / "google-sa.json")):
+        if Path(path).is_file():
+            return path
+    return str(BASE_DIR / "secret" / "google-sa.json")
+
+
+# Калиди service account-и Google (JSON). Ҷадвал бояд ба email-и он «Editor» дода шуда бошад.
+GSHEET_KEY_FILE = _s("GSHEET_KEY_FILE", "") or _default_key_file()
+GSHEET_INTERVAL = _i("GSHEET_INTERVAL", 60)            # сония — санҷиши пурраи ҷадвал
+GSHEET_URL = f"https://docs.google.com/spreadsheets/d/{GSHEET_ID}/edit" if GSHEET_ID else ""
 
 
 # ──────────────────────────────────────────────────────────────────────────

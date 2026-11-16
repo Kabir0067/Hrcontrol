@@ -99,6 +99,7 @@ _ATTENDANCE_COLUMNS = """
     reminded_at  TEXT,
     msg_id       INTEGER,
     arrived_at   TEXT,
+    left_at      TEXT,
     reason       TEXT,
     eta          TEXT,
     source       TEXT    NOT NULL DEFAULT 'bot',
@@ -160,7 +161,9 @@ CREATE TABLE IF NOT EXISTS employees (
     alias      TEXT,
     active     INTEGER NOT NULL DEFAULT 1,
     work_time  TEXT,              -- вақти алоҳидаи оғози кор (HH:MM) ё NULL = умумӣ
-    work_days  TEXT               -- рӯзҳои кории алоҳида ("0,1,2") ё NULL = умумӣ
+    work_days  TEXT,              -- рӯзҳои кории алоҳида ("0,1,2") ё NULL = умумӣ
+    sheet_time  TEXT,             -- «Омадан (брнм)» аз Google Sheet (HH:MM) — худкор
+    sheet_leave TEXT              -- «Рафтан (брнм)» аз Google Sheet (HH:MM) — худкор
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -175,6 +178,19 @@ CREATE TABLE IF NOT EXISTS attendance ({_ATTENDANCE_COLUMNS});
 
 CREATE INDEX IF NOT EXISTS idx_attendance_period  ON attendance(work_date, user_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_pending ON attendance(status, prompted_at);
+
+-- Google Sheet: кадом ячейкаро бот худаш навиштааст (ва чӣ навишт).
+-- Бот танҳо ячейкаи холӣ ё ячейкаи худашро иваз мекунад — навиштаи дастии
+-- одамро ҳеҷ гоҳ вайрон намекунад.
+CREATE TABLE IF NOT EXISTS sheet_cells (
+    tab        TEXT    NOT NULL,      -- "<spreadsheetId>:<sheetId>"
+    user_id    INTEGER NOT NULL,
+    work_date  TEXT    NOT NULL,
+    kind       TEXT    NOT NULL CHECK(kind IN ('in', 'out')),
+    value      TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL,
+    PRIMARY KEY (tab, user_id, work_date, kind)
+);
 
 -- Рӯзҳои истироҳати иловагӣ (идҳо ва ғ.) — дар ин рӯзҳо савол намеравад.
 CREATE TABLE IF NOT EXISTS days_off (
@@ -197,11 +213,14 @@ _EXTRA_COLUMNS = {
         "active":    "INTEGER NOT NULL DEFAULT 1",
         "work_time": "TEXT",
         "work_days": "TEXT",
+        "sheet_time": "TEXT",
+        "sheet_leave": "TEXT",
     },
     "attendance": {
         "reminded_at": "TEXT",
         "msg_id":      "INTEGER",
         "source":      "TEXT NOT NULL DEFAULT 'bot'",
+        "left_at":     "TEXT",
     },
 }
 
@@ -265,7 +284,7 @@ def _migrate_attendance_status(conn: sqlite3.Connection) -> None:
     log.info("🔧 Миграция: ҷадвали давомот (вазъияти 'leave')…")
     new_cols = {
         "id", "user_id", "name", "work_date", "scheduled_at", "status", "prompted_at",
-        "reminded_at", "msg_id", "arrived_at", "reason", "eta", "source",
+        "reminded_at", "msg_id", "arrived_at", "left_at", "reason", "eta", "source",
         "created_at", "updated_at",
     }
     keep = ", ".join(sorted(_table_columns(conn, "attendance") & new_cols))
@@ -389,15 +408,24 @@ def _parse_days(value) -> list[int] | None:
 
 
 def emp_schedule(emp: dict, sch: dict) -> dict:
-    """Вақти кори як корманд: вақти алоҳидаи ӯ (агар гузошта шуда бошад) ё умумӣ."""
+    """Вақти кори як корманд.
+
+    Тартиби афзалият: вақт аз Google Sheet («Омадан (брнм)», агар корманд ба сатри
+    ҷадвал пайваст бошад ва ин имкон фаъол бошад) → вақти алоҳида аз панел → умумӣ.
+    """
+    sheet_time = _valid_clock(emp.get("sheet_time")) if sch.get("sheet_times") else ""
     own_time = _valid_clock(emp.get("work_time"))
     own_days = _parse_days(emp.get("work_days"))
+    time_ = sheet_time or own_time
     return {
-        "time": own_time or sch["time"],
+        "time": time_ or sch["time"],
         "days": own_days if own_days is not None else list(sch["days"]),
-        "custom_time": bool(own_time),
+        "custom_time": bool(time_),
         "custom_days": own_days is not None,
-        "custom": bool(own_time) or own_days is not None,
+        "custom": bool(time_) or own_days is not None,
+        "source": "sheet" if sheet_time else ("own" if own_time else "global"),
+        "sheet_time": _valid_clock(emp.get("sheet_time")) or None,
+        "sheet_leave": _valid_clock(emp.get("sheet_leave")) or None,
     }
 
 
@@ -432,7 +460,8 @@ def list_employees() -> list[dict]:
         rows = _rows(conn.execute(
             f"""
             SELECT e.user_id, e.name, e.username, e.alias, e.active,
-                   e.first_seen, e.last_seen, e.work_time, e.work_days, {_EMP_NAME} AS display,
+                   e.first_seen, e.last_seen, e.work_time, e.work_days,
+                   e.sheet_time, e.sheet_leave, {_EMP_NAME} AS display,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id) AS requests,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id
                                                      AND r.status = 'pending') AS pending
@@ -761,7 +790,8 @@ def get_schedule() -> dict:
     with _ro() as conn:
         raw = {r["key"]: r["value"] for r in conn.execute(
             "SELECT key, value FROM settings WHERE key IN "
-            "('work_start_time', 'work_days', 'work_grace', 'daily_report')")}
+            "('work_start_time', 'work_days', 'work_grace', 'daily_report', "
+            "'gsheet_enabled', 'gsheet_times')")}
     time_ = _valid_clock(raw.get("work_start_time"))
     try:
         days = sorted({int(x) for x in str(raw["work_days"]).split(",") if x.strip() != ""
@@ -773,8 +803,11 @@ def get_schedule() -> dict:
     except (TypeError, ValueError):
         grace = cfg.DEFAULT_GRACE
     report = str(raw.get("daily_report", "1")) != "0"
+    # Вақтҳои «Омадан (брнм)» аз Google Sheet танҳо вақте ки синхронизатсия фаъол аст
+    sheet_times = (bool(cfg.GSHEET_ID) and str(raw.get("gsheet_enabled", "1")) != "0"
+                   and str(raw.get("gsheet_times", "1")) != "0")
     return {"time": time_, "days": days, "grace": grace, "report": report,
-            "enabled": bool(time_)}
+            "enabled": bool(time_), "sheet_times": sheet_times}
 
 
 def set_schedule(time: str | None = None, days: Iterable[int] | None = None,
@@ -896,6 +929,7 @@ def _cell(rec: dict, grace: int) -> dict:
         "date": rec["work_date"],
         "s": state,
         "t": _clock(rec.get("arrived_at")),
+        "out": _clock(rec.get("left_at")) if state in ("on_time", "late") else "",
         "late": _late_minutes(rec) if state == "late" else 0,
         "reason": rec.get("reason") or "",
         "eta": rec.get("eta") or "",
@@ -951,7 +985,7 @@ def create_due_attendance() -> list[dict]:
     stamp = cfg.now_str()
     with _tx() as conn:
         employees = _rows(conn.execute(
-            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.work_time, e.work_days
+            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.work_time, e.work_days, e.sheet_time
                   FROM employees e WHERE e.active = 1"""))
         have = {r["user_id"] for r in conn.execute(
             "SELECT user_id FROM attendance WHERE work_date = ?", (day,))}
@@ -1133,6 +1167,111 @@ def attendance_mark_arrived(user_id: int) -> Optional[dict]:
     return get_attendance(rec["id"])
 
 
+def set_attendance_left(attendance_id: int) -> bool:
+    """Вақти рафтан аз кор — танҳо як бор ва танҳо пас аз «омад»."""
+    stamp = cfg.now_str()
+    with _tx() as conn:
+        cur = conn.execute(
+            """UPDATE attendance SET left_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'present' AND left_at IS NULL
+                  AND arrived_at IS NOT NULL AND arrived_at <= ?""",
+            (stamp, stamp, attendance_id, stamp),
+        )
+        return cur.rowcount > 0
+
+
+def attendance_mark_left(user_id: int) -> tuple[str, Optional[dict]]:
+    """Тугмаи «Аз кор рафтам». Бармегардонад (натиҷа, сабт):
+
+    "ok" — қайд шуд · "already" — аллакай қайд шуда буд ·
+    "not_present" — имрӯз омаданаш қайд нашудааст.
+    """
+    rec = get_today_attendance(user_id)
+    if not rec or rec["status"] != "present":
+        return "not_present", rec
+    if rec.get("left_at"):
+        return "already", rec
+    if not set_attendance_left(rec["id"]):
+        return "already", get_attendance(rec["id"]) or rec
+    return "ok", get_attendance(rec["id"])
+
+
+def attendance_between(date_from: str, date_to: str) -> list[dict]:
+    """Ҳамаи сабтҳои давомот дар давра (барои Google Sheet)."""
+    with _ro() as conn:
+        return _rows(conn.execute(
+            "SELECT * FROM attendance WHERE work_date >= ? AND work_date <= ? ORDER BY work_date, id",
+            (date_from, date_to)))
+
+
+def attendance_fingerprint(date_from: str) -> tuple:
+    """Тағйироти давомотро зуд мефаҳмонад (бе хондани ҳамаи сабтҳо)."""
+    with _ro() as conn:
+        row = conn.execute(
+            """SELECT COUNT(*) c, COALESCE(MAX(updated_at), '') u, COALESCE(SUM(id), 0) s
+                 FROM attendance WHERE work_date >= ?""", (date_from,)).fetchone()
+        emp = conn.execute(
+            f"""SELECT COUNT(*) c, COALESCE(SUM(active), 0) a,
+                       COALESCE(group_concat({_EMP_NAME}, '|'), '') n
+                  FROM employees e""").fetchone()
+    return (row["c"], row["u"], row["s"], emp["c"], emp["a"], hash(emp["n"]))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+#  Google Sheet: ячейкаҳои бот ва вақтҳои ҷадвал
+# ──────────────────────────────────────────────────────────────────────────
+
+def employees_brief() -> list[dict]:
+    with _ro() as conn:
+        return _rows(conn.execute(
+            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active,
+                       e.sheet_time, e.sheet_leave
+                  FROM employees e ORDER BY e.active DESC, name COLLATE NOCASE"""))
+
+
+def sync_sheet_plans(plans: dict[int, tuple[str | None, str | None]]) -> int:
+    """Вақтҳои «Омадан/Рафтан (брнм)» аз ҷадвал → база. Дигарон — тоза.
+
+    Бармегардонад: чанд корманд иваз шуд.
+    """
+    changed = 0
+    with _tx() as conn:
+        for row in conn.execute("SELECT user_id, sheet_time, sheet_leave FROM employees").fetchall():
+            want_in, want_out = plans.get(row["user_id"], (None, None))
+            want_in = _valid_clock(want_in) or None
+            want_out = _valid_clock(want_out) or None
+            if (row["sheet_time"] or None, row["sheet_leave"] or None) != (want_in, want_out):
+                conn.execute("UPDATE employees SET sheet_time = ?, sheet_leave = ? WHERE user_id = ?",
+                             (want_in, want_out, row["user_id"]))
+                changed += 1
+    if changed:
+        log.info("📗 Вақтҳо аз Google Sheet: %d корманд навсозӣ шуд", changed)
+    return changed
+
+
+def sheet_owned(tab: str, date_from: str, date_to: str) -> dict[tuple[int, str, str], str]:
+    with _ro() as conn:
+        return {(r["user_id"], r["work_date"], r["kind"]): r["value"] for r in conn.execute(
+            """SELECT user_id, work_date, kind, value FROM sheet_cells
+                WHERE tab = ? AND work_date >= ? AND work_date <= ?""", (tab, date_from, date_to))}
+
+
+def sheet_own_apply(tab: str, put: list[tuple[int, str, str, str]],
+                    drop: list[tuple[int, str, str]]) -> None:
+    stamp = cfg.now_str()
+    with _tx() as conn:
+        for uid, day, kind, value in put:
+            conn.execute(
+                """INSERT INTO sheet_cells (tab, user_id, work_date, kind, value, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(tab, user_id, work_date, kind)
+                   DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+                (tab, uid, day, kind, value, stamp))
+        for uid, day, kind in drop:
+            conn.execute("DELETE FROM sheet_cells WHERE tab = ? AND user_id = ? AND work_date = ? AND kind = ?",
+                         (tab, uid, day, kind))
+
+
 def daily_report_due() -> Optional[str]:
     """Санаи имрӯз, агар вақти ҳисоботи рӯз ба гурӯҳ расида бошад ва ҳанӯз нарафта бошад."""
     sch = get_schedule()
@@ -1180,7 +1319,8 @@ def _people(conn, user_ids_with_records: set[int], user_id: int | None = None) -
         where = "e.user_id = ?"
         params = [int(user_id)]
     return _rows(conn.execute(
-        f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active, e.work_time, e.work_days
+        f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active, e.work_time, e.work_days,
+                   e.sheet_time, e.sheet_leave
               FROM employees e WHERE {where} ORDER BY name COLLATE NOCASE""", params))
 
 
@@ -1370,8 +1510,11 @@ def get_attendance_stats(date_from: str | None = None, date_to: str | None = Non
 
 def admin_set_attendance(user_id: int, work_date: str, status: str,
                          clock: str | None = None, reason: str | None = None,
-                         eta: str | None = None) -> dict:
-    """Ислоҳи дастии давомот аз панел (омад / наомад / рухсатӣ)."""
+                         eta: str | None = None, left=_UNSET) -> dict:
+    """Ислоҳи дастии давомот аз панел (омад / наомад / рухсатӣ).
+
+    left: вақти рафтан ("HH:MM"); "" ё None — тоза; набошад — бетағйир.
+    """
     if status not in ("present", "absent", "leave"):
         raise ValueError("Вазъияти номаълум")
     datetime.strptime(work_date, cfg.DATE_FMT)
@@ -1386,23 +1529,32 @@ def admin_set_attendance(user_id: int, work_date: str, status: str,
         own = emp_schedule(emp, sch)["time"] if emp else sch["time"]
         scheduled_at = row["scheduled_at"] if row else _scheduled_for(
             work_date, own or _valid_clock(clock) or "09:00")
-        arrived_at = None
+        arrived_at = left_at = None
         if status == "present":
             clock = _valid_clock(clock) or (scheduled_at[11:16] if scheduled_at else "09:00")
             arrived_at = f"{work_date} {clock}:00"
-        values = (status, arrived_at, (reason or "").strip()[:1000] or None,
+            if left is _UNSET:
+                left_at = row["left_at"] if row and row["status"] == "present" else None
+            else:
+                out = _valid_clock(left)
+                if (left or "").strip() and not out:
+                    raise ValueError("Вақти рафтанро ба шакли 18:00 нависед")
+                left_at = f"{work_date} {out}:00" if out else None
+            if left_at and left_at < arrived_at:
+                raise ValueError("Вақти рафтан бояд пас аз вақти омадан бошад")
+        values = (status, arrived_at, left_at, (reason or "").strip()[:1000] or None,
                   (eta or "").strip()[:300] or None, stamp)
         if row is None:
             conn.execute(
                 """INSERT INTO attendance
-                       (user_id, name, work_date, scheduled_at, status, arrived_at, reason, eta,
-                        source, prompted_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?, ?, ?)""",
-                (user_id, emp["display"], work_date, scheduled_at, *values[:4], stamp, stamp, stamp),
+                       (user_id, name, work_date, scheduled_at, status, arrived_at, left_at,
+                        reason, eta, source, prompted_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?, ?, ?)""",
+                (user_id, emp["display"], work_date, scheduled_at, *values[:5], stamp, stamp, stamp),
             )
         else:
             conn.execute(
-                """UPDATE attendance SET status = ?, arrived_at = ?, reason = ?, eta = ?,
+                """UPDATE attendance SET status = ?, arrived_at = ?, left_at = ?, reason = ?, eta = ?,
                           updated_at = ?, source = 'admin' WHERE id = ?""",
                 (*values, row["id"]),
             )
@@ -1693,6 +1845,8 @@ def delete_worker(user_id: int) -> dict:
         conn.execute("DELETE FROM arrival_checks WHERE user_id = ?", (user_id,))
         att = conn.execute("DELETE FROM attendance WHERE user_id = ?", (user_id,)).rowcount or 0
         conn.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
+        # Google Sheet: таърихи ҷадвал мемонад — бот танҳо «фаромӯш» мекунад, ки навишта буд
+        conn.execute("DELETE FROM sheet_cells WHERE user_id = ?", (user_id,))
         emp = conn.execute("DELETE FROM employees WHERE user_id = ?", (user_id,)).rowcount or 0
     log.warning("🗑 Маълумоти корманд %s нест шуд (%d дархост, %d давомот)", user_id, removed, att)
     return {"requests": removed, "attendance": att, "employee": emp}
@@ -1715,7 +1869,10 @@ def wipe(scope: str = "requests", before: str | None = None) -> dict:
                 "DELETE FROM requests WHERE created_at <= ?", (stamp,)).rowcount or 0
             counts["attendance"] = conn.execute(
                 "DELETE FROM attendance WHERE work_date <= ?", (before,)).rowcount or 0
+            # Ҷадвали Google Sheet тоза намешавад: бот танҳо «фаромӯш» мекунад
+            conn.execute("DELETE FROM sheet_cells WHERE work_date <= ?", (before,))
         else:
+            conn.execute("DELETE FROM sheet_cells")
             conn.execute("DELETE FROM arrival_checks")
             counts["requests"] = conn.execute("DELETE FROM requests").rowcount or 0
             counts["attendance"] = conn.execute("DELETE FROM attendance").rowcount or 0
