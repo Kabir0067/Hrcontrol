@@ -77,7 +77,7 @@ BOT_TOKEN = _s("BOT_TOKEN", "")
 GROUP_ID = _i("GROUP_ID", -1003933020249)
 
 # URL-и Mini App. Telegram ҳатман https талаб мекунад.
-WEBAPP_URL = _s("WEBAPP_URL", "https://test.softclub.tj/hrcontrol/")
+WEBAPP_URL = _s("WEBAPP_URL", "https://staff.softclub.tj/")
 
 
 # ──────────────────────────────────────────────────────────────────────────

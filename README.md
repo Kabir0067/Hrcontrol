@@ -3,7 +3,7 @@
 Боти Telegram ва панели веб барои **давомоти кормандон** ва дархостҳо ба роҳбарият
 (дер мемонам, намеоям, ҷавоб мепурсам, барвақт меравам).
 
-**Продакшн:** https://test.softclub.tj/hrcontrol/ · бот `@SoftClubHrControlBot` · фармони `/admin`
+**Продакшн:** https://staff.softclub.tj/ · бот `@SoftClubHrControlBot` · фармони `/admin`
 
 ---
 
@@ -55,7 +55,7 @@
 **Тугмаҳои бот:** «✅ Ман омадам» ва «🚪 Ман рафтам» — ҳар вақт, ҳар кадом як бор дар рӯз.
 
 **Домен:** `staff.softclub.tj` (nginx: `deploy/nginx-hrcontrol-staff.conf`). Вақте DNS ба сервер ишора кунад,
-watchdog сертификати Let's Encrypt мегирад ва `WEBAPP_URL`-ро худаш иваз мекунад; `test.softclub.tj/hrcontrol/` ҳам кор мекунад.
+watchdog сертификати Let's Encrypt мегирад ва `WEBAPP_URL`-ро худаш иваз мекунад. Суроғаи кӯҳна `test.softclub.tj/hrcontrol/` хориҷ шудааст — ягона суроға `https://staff.softclub.tj/`.
 
 **Танзим:** калиди service account — `/etc/hrcontrol/google-sa.json` (сервер) ё `secret/google-sa.json`
 (компютер; ба git намеравад). Ҷадвал → **Share** → email-и калид (`client_email`) → **Editor**.

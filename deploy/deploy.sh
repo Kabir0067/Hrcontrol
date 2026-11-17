@@ -146,16 +146,21 @@ install -m 755 "$CODE/deploy/hrcontrol-watchdog.sh"        /usr/local/sbin/hrcon
 install -m 755 "$CODE/deploy/deploy.sh"                    /usr/local/sbin/hrcontrol-deploy
 
 if command -v nginx >/dev/null 2>&1; then
-    [ -f /etc/nginx/sites-available/hrcontrol ] || install -m 644 "$CODE/deploy/nginx-hrcontrol.conf" /etc/nginx/sites-available/hrcontrol
-    [ -e /etc/nginx/sites-enabled/hrcontrol ] || ln -s /etc/nginx/sites-available/hrcontrol /etc/nginx/sites-enabled/hrcontrol
+    # Суроғаи кӯҳна test.softclub.tj/hrcontrol дигар истифода намешавад: сайти кӯҳнаи HR хориҷ мешавад
+    # (танҳо агар аз они мо бошад — ба 127.0.0.1:8901 равона кунад); нусха — дар сейф.
+    old_site=/etc/nginx/sites-available/hrcontrol
+    if [ -f "$old_site" ] && grep -q "127.0.0.1:8901" "$old_site" && grep -q "test.softclub.tj" "$old_site"; then
+        install -m 600 "$old_site" "$VAULT/nginx-hrcontrol-test.conf.old"
+        rm -f /etc/nginx/sites-enabled/hrcontrol "$old_site"
+        log "сайти кӯҳнаи test.softclub.tj/hrcontrol хориҷ шуд (нусха: $VAULT/nginx-hrcontrol-test.conf.old)"
+    fi
     # Домени асосӣ: staff.softclub.tj (сайти алоҳида; сертификат — аз watchdog, вақте DNS тайёр шавад)
     [ -s "$ETC/domain" ] || echo "staff.softclub.tj" > "$ETC/domain"
     [ -f /etc/nginx/sites-available/hrcontrol-staff ] || install -m 644 "$CODE/deploy/nginx-hrcontrol-staff.conf" /etc/nginx/sites-available/hrcontrol-staff
     [ -e /etc/nginx/sites-enabled/hrcontrol-staff ] || ln -s /etc/nginx/sites-available/hrcontrol-staff /etc/nginx/sites-enabled/hrcontrol-staff
     nginx -t >/dev/null 2>&1 || { rm -f /etc/nginx/sites-enabled/hrcontrol-staff; log "огоҳӣ: конфиги staff дар nginx қабул нашуд — хомӯш монд"; }
     # пас аз нав кардани сертификат (certbot.timer) nginx бояд онро бор кунад
-    renew_conf="/etc/letsencrypt/renewal/$(head -1 "$ETC/domain" | tr -d ' 
-').conf"
+    renew_conf="/etc/letsencrypt/renewal/$(head -1 "$ETC/domain" | tr -d '[:space:]').conf"
     if [ -f "$renew_conf" ] && ! grep -q '^renew_hook' "$renew_conf"; then
         sed -i '/^\[renewalparams\]/a renew_hook = systemctl reload nginx' "$renew_conf"
     fi

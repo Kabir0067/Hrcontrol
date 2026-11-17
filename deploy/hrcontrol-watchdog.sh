@@ -25,8 +25,8 @@ ETC=/etc/hrcontrol
 VAULT=/var/backups/hrcontrol
 REPO=$VAULT/repo.git
 HEALTH_URL="http://127.0.0.1:8901/api/health?strict=1"
-NGX_AVAIL=/etc/nginx/sites-available/hrcontrol
-NGX_LINK=/etc/nginx/sites-enabled/hrcontrol
+NGX_AVAIL=/etc/nginx/sites-available/hrcontrol-staff
+NGX_LINK=/etc/nginx/sites-enabled/hrcontrol-staff
 FAILS_FILE=/run/hrcontrol-watchdog.fails
 
 log() { logger -t hrcontrol-watchdog -- "$*"; echo "$*"; }
@@ -159,8 +159,8 @@ if command -v nginx >/dev/null 2>&1; then
     if ! systemctl is-enabled --quiet nginx; then
         systemctl enable nginx >/dev/null 2>&1 && log "nginx disabled буд → enable шуд"
     fi
-    if [ ! -f "$NGX_AVAIL" ] && [ -f "$CODE/deploy/nginx-hrcontrol.conf" ]; then
-        install -m 644 "$CODE/deploy/nginx-hrcontrol.conf" "$NGX_AVAIL"
+    if [ ! -f "$NGX_AVAIL" ] && [ -f "$CODE/deploy/nginx-hrcontrol-staff.conf" ]; then
+        install -m 644 "$CODE/deploy/nginx-hrcontrol-staff.conf" "$NGX_AVAIL"
         log "конфиги nginx нест шуда буд → аз код барқарор шуд"
     fi
     if [ -f "$NGX_AVAIL" ] && [ ! -e "$NGX_LINK" ]; then
