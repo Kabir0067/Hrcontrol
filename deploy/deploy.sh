@@ -153,6 +153,12 @@ if command -v nginx >/dev/null 2>&1; then
     [ -f /etc/nginx/sites-available/hrcontrol-staff ] || install -m 644 "$CODE/deploy/nginx-hrcontrol-staff.conf" /etc/nginx/sites-available/hrcontrol-staff
     [ -e /etc/nginx/sites-enabled/hrcontrol-staff ] || ln -s /etc/nginx/sites-available/hrcontrol-staff /etc/nginx/sites-enabled/hrcontrol-staff
     nginx -t >/dev/null 2>&1 || { rm -f /etc/nginx/sites-enabled/hrcontrol-staff; log "огоҳӣ: конфиги staff дар nginx қабул нашуд — хомӯш монд"; }
+    # пас аз нав кардани сертификат (certbot.timer) nginx бояд онро бор кунад
+    renew_conf="/etc/letsencrypt/renewal/$(head -1 "$ETC/domain" | tr -d ' 
+').conf"
+    if [ -f "$renew_conf" ] && ! grep -q '^renew_hook' "$renew_conf"; then
+        sed -i '/^\[renewalparams\]/a renew_hook = systemctl reload nginx' "$renew_conf"
+    fi
     systemctl enable nginx >/dev/null 2>&1 || true
     if nginx -t >/dev/null 2>&1; then systemctl reload nginx || systemctl start nginx; else log "огоҳӣ: 'nginx -t' хато медиҳад"; fi
 fi
