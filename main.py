@@ -141,7 +141,8 @@ _stopping = False
 
 async def setup_commands() -> None:
     await bot.set_my_commands([
-        BotCommand("start", "🚀 Оғоз — дархости нав"),
+        BotCommand("start", "🚀 Оғоз — омадам, рафтам, дархост"),
+        BotCommand("reja", "🗓 Реҷаи кори ман (аз ҷадвал)"),
         BotCommand("darkhost", "📋 Дархостҳои ман"),
         BotCommand("bekor", "❌ Бекор кардани амали ҷорӣ"),
         BotCommand("kumak", "ℹ️ Бот чӣ кор мекунад"),

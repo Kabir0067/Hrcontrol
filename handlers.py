@@ -140,6 +140,7 @@ MONTHS_GEN = ["январ", "феврал", "март", "апрел", "май", 
 
 ARRIVE_BUTTON = "✅ Ман омадам"
 LEFT_BUTTON = "🚪 Ман рафтам"
+PLAN_BUTTON = "🗓 Реҷаи кори ман"
 
 STATUS_WORD = {
     "pending": "⏳ Интизори ҷавоб",
@@ -235,9 +236,82 @@ def _main_reply_kb(admin: bool = False) -> ReplyKeyboardMarkup:
     if admin:
         kb.row(KeyboardButton("🛡 Панели идора", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
     kb.row(KeyboardButton(ARRIVE_BUTTON), KeyboardButton(LEFT_BUTTON))
-    kb.row(KeyboardButton("📝 Дархости нав"))
+    kb.row(KeyboardButton(PLAN_BUTTON), KeyboardButton("📝 Дархости нав"))
     kb.row(KeyboardButton("📋 Дархостҳои ман"), KeyboardButton("ℹ️ Кӯмак"))
     return kb
+
+
+def _kb_home() -> InlineKeyboardMarkup:
+    """Паёми /start: омадам/рафтам ва реҷа — дар боло, дархостҳо — дар поён."""
+    kb = InlineKeyboardMarkup()
+    kb.row(InlineKeyboardButton(ARRIVE_BUTTON, callback_data="me:in"),
+           InlineKeyboardButton(LEFT_BUTTON, callback_data="me:out"))
+    kb.row(InlineKeyboardButton(PLAN_BUTTON, callback_data="me:plan"))
+    buttons = [InlineKeyboardButton(f"{TYPES[k]['emoji']} {TYPES[k]['self']}", callback_data=f"t:{k}")
+               for k in TYPE_ORDER]
+    for i in range(0, len(buttons), 2):
+        kb.row(*buttons[i:i + 2])
+    return kb
+
+
+def _days_words(days: list[int]) -> str:
+    """[0..5] → «Душанбе – Шанбе»; дигар — рӯйхат."""
+    days = sorted(set(days or []))
+    if not days:
+        return "—"
+    if len(days) > 2 and days == list(range(days[0], days[-1] + 1)):
+        return f"{WEEKDAYS[days[0]].capitalize()} – {WEEKDAYS[days[-1]].capitalize()}"
+    return ", ".join(WEEKDAYS[d] for d in days).capitalize()
+
+
+def _today_line(user_id: int) -> str:
+    rec = db.get_today_attendance(user_id)
+    if not rec or rec["status"] == "pending":
+        return "⏳ Имрӯз омадани шумо ҳанӯз қайд нашудааст"
+    if rec["status"] == "present":
+        out = (f" · 🚪 рафтед <b>{_clock(rec['left_at'])}</b>" if rec.get("left_at")
+               else " · 🚪 ҳанӯз нарафтаед")
+        return f"✅ Имрӯз омадед <b>{_clock(rec['arrived_at'])}</b>{_late_note(rec)}{out}"
+    if rec["status"] == "leave":
+        return "🌴 Имрӯз шумо дар рухсатӣ ҳастед"
+    return "❌ Имрӯз «наомадам» қайд шудааст" + (f" — {_esc(rec['reason'])}" if rec.get("reason") else "")
+
+
+def _plan_text(user_id: int) -> str:
+    """Реҷаи кори корманд аз ҷадвали Google: кай биёяд, кай равад, кадом рӯзҳо + имрӯз ва ин моҳ."""
+    emp = db.get_employee(user_id)
+    if not emp:
+        return "ℹ️ Аввал /start-ро пахш кунед."
+    sch = db.get_schedule()
+    es = db.emp_schedule(emp, sch)
+    lines = ["🗓 <b>Реҷаи кори шумо</b>", "", f"👤 {_esc(_short_name(emp['display']))}"]
+    if es.get("branch"):
+        try:
+            import gsheet
+            branch = next((b["name"] for b in gsheet.get_books() if b["id"] == es["branch"]), "")
+        except Exception:
+            branch = ""
+        lines += [f"🏢 Филиал: <b>{_esc(branch or 'ҷадвали Google')}</b>", "",
+                  f"🕘 Омадан: <b>{_esc(es.get('sheet_time') or es['time'] or '—')}</b>",
+                  f"🕕 Рафтан: <b>{_esc(es.get('sheet_leave') or '—')}</b>",
+                  f"📅 Рӯзҳои кор: <b>{_esc(_days_words(es['days']))}</b>",
+                  "", "<i>Вақтҳо аз ҷадвали корхона гирифта мешаванд. Агар нодуруст бошад — ба роҳбар гӯед.</i>"]
+    else:
+        lines += ["", "ℹ️ Шумо ҳанӯз ба ҷадвали ягон филиал пайваст нестед.",
+                  f"ID-и Telegram-и шумо: <code>{user_id}</code> — онро ба роҳбар ё HR диҳед."]
+        if not sch.get("sheet_only") and sch.get("time"):
+            lines.append(f"🕘 Ҳоло вақти умумӣ: <b>{_esc(es['time'])}</b> · {_esc(_days_words(es['days']))}")
+    lines += ["", _today_line(user_id)]
+    today = cfg.now().date()
+    recs = [r for r in db.attendance_between(today.replace(day=1).isoformat(), today.isoformat())
+            if r["user_id"] == user_id]
+    if recs:
+        states = [db.att_state(r, sch["grace"]) for r in recs]
+        came = sum(1 for x in states if x in ("on_time", "late"))
+        late = states.count("late")
+        absent = states.count("absent")
+        lines.append(f"📊 <b>Ин моҳ:</b> {came} рӯз омадед · {late} бор дер · {absent} наомад")
+    return "\n".join(lines)
 
 
 _admin_cache: dict[int, tuple[float, bool]] = {}
@@ -462,6 +536,7 @@ def _help_text(admin: bool = False) -> str:
         "• <b>✅ Омадам</b> — вақти омадан қайд мешавад\n"
         "• <b>❌ Наомадам</b> — мегӯед чаро ва кай меоед\n"
         f"• <b>{ARRIVE_BUTTON}</b> / <b>{LEFT_BUTTON}</b> — ҳар вақт пахш кунед; ҳар кадом як бор дар рӯз\n"
+        f"• <b>{PLAN_BUTTON}</b> — вақти омадан ва рафтани шумо аз ҷадвал\n"
         "Рӯзҳои истироҳат савол намеояд.\n\n"
         "<b>2. Дархост ба роҳбарият</b>\n"
         "«📝 Дархости нав»-ро пахш кунед ва интихоб кунед:\n"
@@ -477,6 +552,7 @@ def _help_text(admin: bool = False) -> str:
         "<b>Фармонҳо</b>\n"
         "/start — оғоз\n"
         "/darkhost — дархостҳои ман\n"
+        "/reja — реҷаи кори ман\n"
         "/bekor — бекор кардан\n"
         "/kumak — ҳамин дастур\n"
         + ("/admin — панели идора\n" if admin else "")
@@ -734,8 +810,67 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             await _safe(bot.send_message(
                 chat_id, _welcome(user.first_name or "ҳамкор"), reply_markup=_main_reply_kb(admin)))
         await _safe(bot.send_message(
-            chat_id, "<b>Чӣ хабар?</b>\nЯке аз инҳоро интихоб кунед:",
-            reply_markup=_kb_types()))
+            chat_id, f"{_today_line(user.id)}\n\n<b>Чӣ кор мекунем?</b> Интихоб кунед:",
+            reply_markup=_kb_home()))
+
+    # ── «Ман омадам» / «Ман рафтам» / «Реҷаи кори ман» (тугмаи доимӣ ва inline) ──
+
+    async def do_arrive(chat_id: int, user) -> None:
+        uid = user.id
+        db.clear_state(uid)
+        db.touch_employee(uid, _display_name(user), user.username)
+        result, rec = db.attendance_self_arrive(uid)
+        if result in ("ok", "late_ok") and rec:
+            clock = _clock(rec["arrived_at"])
+            late = _late_note(rec)
+            text_ok = (f"✅ <b>Қайд шуд.</b> Соати <b>{clock}</b> ба кор омадед{late}.\n\nКори хуб! ☀️\n"
+                       f"<i>Вақте аз кор меравед, «{LEFT_BUTTON}»-ро пахш кунед.</i>")
+            if rec.get("msg_id"):            # саволи субҳ ҳам буд — тугмаҳояш дигар лозим нест
+                await _safe(bot.edit_message_reply_markup(chat_id=uid, message_id=rec["msg_id"], reply_markup=None))
+            await _safe(bot.send_message(chat_id, text_ok, reply_markup=_kb_att_left(rec["id"])))
+            if result == "late_ok":
+                await _safe(bot.send_message(
+                    GROUP_ID, f"🟢 <b>{_esc(_short_name(rec['name']))}</b> ба кор омад — <b>{clock}</b>{late}"))
+        elif result == "already" and rec:
+            await _safe(bot.send_message(
+                chat_id,
+                f"ℹ️ Омадани шумо имрӯз соати <b>{_clock(rec.get('arrived_at'))}</b> қайд шуда буд.\n"
+                "Дар як рӯз як бор қайд мешавад."))
+        elif result == "leave":
+            await _safe(bot.send_message(chat_id, "🌴 Шумо имрӯз дар рухсатӣ ҳастед."))
+        else:
+            await _safe(bot.send_message(chat_id, "⚠️ Хато шуд. /start-ро пахш кунед ва аз нав кӯшиш кунед."))
+
+    async def do_leave(chat_id: int, user) -> None:
+        uid = user.id
+        db.clear_state(uid)
+        result, rec = db.attendance_mark_left(uid)
+        if result == "ok":
+            await _safe(bot.send_message(chat_id, _left_text(rec)))
+        elif result == "already":
+            await _safe(bot.send_message(
+                chat_id,
+                f"ℹ️ Рафтани шумо имрӯз соати <b>{_clock(rec.get('left_at'))}</b> қайд шуда буд.\n"
+                "Дар як рӯз як бор қайд мешавад."))
+        else:
+            await _safe(bot.send_message(
+                chat_id,
+                "ℹ️ Имрӯз омадани шумо ба кор қайд нашудааст.\n"
+                f"Аввал «{ARRIVE_BUTTON}»-ро пахш кунед.", reply_markup=_kb_home()))
+
+    async def do_plan(chat_id: int, user) -> None:
+        db.touch_employee(user.id, _display_name(user), user.username)
+        await _safe(bot.send_message(chat_id, _plan_text(user.id)))
+
+    @bot.callback_query_handler(func=lambda c: c.data in ("me:in", "me:out", "me:plan"))
+    async def cb_me(call: CallbackQuery):
+        await _safe(bot.answer_callback_query(call.id))
+        action = {"me:in": do_arrive, "me:out": do_leave, "me:plan": do_plan}[call.data]
+        await action(call.message.chat.id, call.from_user)
+
+    @bot.message_handler(commands=["reja", "jadval"], func=_private)
+    async def cmd_plan(message: Message):
+        await do_plan(message.chat.id, message.from_user)
 
     async def ask_reason(chat_id: int, req_type: str, message_id: int | None = None) -> None:
         meta = TYPES[req_type]
@@ -1471,46 +1606,13 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             await _safe(bot.send_message(message.chat.id, _help_text(await is_group_admin(uid))))
             return
         if text.startswith("✅"):
-            db.clear_state(uid)
-            db.touch_employee(uid, _display_name(message.from_user), message.from_user.username)
-            result, rec = db.attendance_self_arrive(uid)
-            if result in ("ok", "late_ok") and rec:
-                clock = _clock(rec["arrived_at"])
-                late = _late_note(rec)
-                text_ok = (f"✅ <b>Қайд шуд.</b> Соати <b>{clock}</b> ба кор омадед{late}.\n\nКори хуб! ☀️\n"
-                           f"<i>Вақте аз кор меравед, «{LEFT_BUTTON}»-ро пахш кунед.</i>")
-                if rec.get("msg_id"):            # саволи субҳ ҳам буд — тугмаҳояш дигар лозим нест
-                    await _safe(bot.edit_message_reply_markup(chat_id=uid, message_id=rec["msg_id"],
-                                                              reply_markup=None))
-                await _safe(bot.send_message(message.chat.id, text_ok, reply_markup=_kb_att_left(rec["id"])))
-                if result == "late_ok":
-                    await _safe(bot.send_message(
-                        GROUP_ID, f"🟢 <b>{_esc(_short_name(rec['name']))}</b> ба кор омад — <b>{clock}</b>{late}"))
-            elif result == "already" and rec:
-                await _safe(bot.send_message(
-                    message.chat.id,
-                    f"ℹ️ Омадани шумо имрӯз соати <b>{_clock(rec.get('arrived_at'))}</b> қайд шуда буд.\n"
-                    "Дар як рӯз як бор қайд мешавад."))
-            elif result == "leave":
-                await _safe(bot.send_message(message.chat.id, "🌴 Шумо имрӯз дар рухсатӣ ҳастед."))
-            else:
-                await _safe(bot.send_message(message.chat.id, "⚠️ Хато шуд. /start-ро пахш кунед ва аз нав кӯшиш кунед."))
+            await do_arrive(message.chat.id, message.from_user)
             return
         if text.startswith("🚪"):
-            db.clear_state(uid)
-            result, rec = db.attendance_mark_left(uid)
-            if result == "ok":
-                await _safe(bot.send_message(message.chat.id, _left_text(rec)))
-            elif result == "already":
-                await _safe(bot.send_message(
-                    message.chat.id,
-                    f"ℹ️ Рафтани шумо имрӯз соати <b>{_clock(rec.get('left_at'))}</b> қайд шуда буд.\n"
-                    "Дар як рӯз як бор қайд мешавад."))
-            else:
-                await _safe(bot.send_message(
-                    message.chat.id,
-                    "ℹ️ Имрӯз омадани шумо ба кор қайд нашудааст.\n"
-                    f"Аввал «{ARRIVE_BUTTON}»-ро пахш кунед."))
+            await do_leave(message.chat.id, message.from_user)
+            return
+        if text.startswith("🗓"):
+            await do_plan(message.chat.id, message.from_user)
             return
 
         if step == "reason_text":

@@ -325,7 +325,11 @@ async def say(uid, text):
 
 
 def buttons(markup):
-    return [b.callback_data for row in (markup.keyboard if markup else []) for b in row]
+    out = []
+    for row in (markup.keyboard if markup else []):
+        for b in row:
+            out.append(b.get("callback_data") if isinstance(b, dict) else getattr(b, "callback_data", None))
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -819,6 +823,28 @@ async def run():
           book_cell_text(bookB, "December 26", R_MASAFI, 1) is None
           and book_cell_text(bookA, "December 2026", R_MASAFI, 1) == str(M2)
           and db.get_employee(M2)["branch"] == "SHEET_PROFSOYUZ_0000000001")
+    # ── бот: /start, «Ман омадам» (inline) ва «Реҷаи кори ман» ───────────
+    at("2026-12-01", "10:20")
+    calls = await say(M2, "/start")
+    sent = [c for c in calls if c[0] == "send"]
+    check("/start shows «Ман омадам / Ман рафтам / Реҷаи кори ман»",
+          any({"me:in", "me:out", "me:plan"} <= set(buttons(c[3])) for c in sent))
+    check("/start shows today's status", any("ҳанӯз қайд нашудааст" in (c[2] or "") for c in sent))
+    await press(M2, "me:in")
+    check("inline «Ман омадам» records the arrival", db.get_today_attendance(M2)["status"] == "present")
+    calls = await press(M2, "me:in")
+    check("inline «Ман омадам» once a day", any("як бор" in (c[2] or "") for c in calls))
+    calls = await press(M2, "me:plan")
+    plan = next((c[2] for c in calls if c[0] == "send"), "") or ""
+    check("«Реҷаи кори ман»: branch, sheet times, today", "Профсоюз" in plan and "10:00" in plan
+          and "20:00" in plan and "10:20" in plan and "Душанбе – Шанбе" in plan, " | ".join(plan.splitlines())[:600])
+    calls = await say(M2, handlers.PLAN_BUTTON)
+    check("reply-keyboard «Реҷаи кори ман» works", any("Реҷаи кори шумо" in (c[2] or "") for c in calls))
+    calls = await say(A, "/reja")
+    check("not in a sheet → shows the Telegram ID to give HR",
+          any(f"<code>{A}</code>" in (c[2] or "") for c in calls))
+    await press(M2, "me:out")
+    check("inline «Ман рафтам» records leaving", db.get_today_attendance(M2)["left_at"] is not None)
     gs._MANAGER = None
     db.set_settings({"gsheet_books": json.dumps([{"id": "SHEET_PROFSOYUZ_0000000001", "name": "Профсоюз"}])})
 
