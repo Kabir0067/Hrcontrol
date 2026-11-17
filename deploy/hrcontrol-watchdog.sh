@@ -185,7 +185,7 @@ if [ -n "$dom" ] && command -v certbot >/dev/null 2>&1 && [ -e /etc/nginx/sites-
     if [ ! -e "$cert" ] && getent ahosts "$dom" >/dev/null 2>&1 \
         && { [ ! -e "$try" ] || [ $(( $(date +%s) - $(stat -c %Y "$try") )) -gt 3600 ]; }; then
         touch "$try"                                   # на зиёда аз як бор дар соат (лимити Let's Encrypt)
-        if certbot certonly --webroot -w /var/www/html -d "$dom" --non-interactive --agree-tos \
+        if certbot certonly --webroot -w /var/www/html -d "$dom" --cert-name "$dom" --non-interactive --agree-tos \
                 --keep-until-expiring >/var/log/hrcontrol-certbot.log 2>&1; then
             log "сертификати $dom гирифта шуд"
         fi

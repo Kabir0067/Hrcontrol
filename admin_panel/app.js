@@ -2301,7 +2301,7 @@ async function initSettings() {
 
     root.innerHTML = `
       <section class="set-hero">
-        <span class="brandplate brandplate--hero"><img src="static/logo-softclub.svg" alt="SoftClub" width="141" height="64"></span>
+        <img class="set-hero__logo" src="static/logo-softclub-light.svg" alt="SoftClub" width="141" height="64">
         <div class="set-hero__text">
           <h2>HR Control</h2>
           <p>Давомоти кормандон · боти Telegram · ҷадвалҳои Google</p>
