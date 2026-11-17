@@ -90,7 +90,7 @@ const ATT = {
   none:    { label: 'Бе сабт',     pill: 'muted',  color: 'var(--surface-3)' },
 };
 const ATT_ORDER = ['on_time', 'late', 'absent', 'leave', 'pending'];
-const SRC = { bot: 'Худи корманд', admin: 'Админ', request: 'Аз дархост' };
+const SRC = { bot: 'Ҷавоби корманд ба бот', self: 'Тугмаи «Ман омадам»', admin: 'Админ', request: 'Аз дархост' };
 
 const WD = ['Дш', 'Сш', 'Чш', 'Пш', 'Ҷм', 'Шб', 'Яш'];
 const WD_FULL = ['душанбе', 'сешанбе', 'чоршанбе', 'панҷшанбе', 'ҷумъа', 'шанбе', 'якшанбе'];
@@ -127,6 +127,9 @@ const S = {
   att: { mode: 'day', day: '', period: '', filter: '', sort: 'name', dayData: null, month: null, seq: 0 },
   team: { q: '', show: 'active', sort: 'name', data: null, seq: 0 },
   stats: { tab: 'att', period: 'wm', from: '', to: '', data: null, seq: 0, sortKey: 'rate', sortDir: 1 },
+  branches: [],                       // филиалҳо (ҷадвалҳои Google): [{id, name}]
+  branch: '',                         // филтр: '' — ҳама, '__none' — берун аз ҷадвал
+  branchesLoaded: false,
   inited: {},
 };
 
@@ -1070,6 +1073,7 @@ function initAtt() {
         </div>
         <div class="toolbar__group" id="att-nav"></div>
       </div>
+      <div id="att-branches"></div>
       <div id="att-body" class="grid">${skel(3)}</div>`;
     root.dataset.built = '1';
     root.addEventListener('click', onAttClick);
@@ -1078,7 +1082,14 @@ function initAtt() {
       if (e.target.id === 'att-sort') { st.sort = e.target.value; renderAttMonth(); }
     });
   }
+  ensureBranches().then(() => { if (st.dayData || st.month) (st.mode === 'day' ? renderAttDay : renderAttMonth)(); });
   loadAtt();
+}
+
+function attBranchBar(list) {
+  const st = S.att;
+  $('#att-branches').innerHTML = branchChips(list);
+  bindBranchChips($('#att-branches'), () => (st.mode === 'day' ? renderAttDay() : renderAttMonth()));
 }
 
 function onAttClick(e) {
@@ -1156,12 +1167,17 @@ function renderAttDay() {
     </div>
     <button class="btn btn--ghost btn--sm" data-att-csv title="Боргирӣ барои Excel">${ICON.download}<span class="hide-phone">CSV</span></button>`;
 
-  const sm = d.summary;
+  attBranchBar(d.items);
+  const mine = d.items.filter(inBranch);
+  const sm = { total: mine.length, none: 0 };
+  ATT_ORDER.forEach((k) => { sm[k] = 0; });
+  mine.forEach((it) => { sm[it.cell ? it.cell.s : 'none'] += 1; });
   const filters = [['', 'Ҳама', sm.total], ...ATT_ORDER.map((k) => [k, ATT[k].label, sm[k]]), ['none', 'Бе сабт', sm.none]]
     .filter(([k, , n]) => k === '' || n);
   if (st.filter && !filters.find(([k]) => k === st.filter)) st.filter = '';
   const list = d.items
     .map((it, i) => ({ it, i }))
+    .filter(({ it }) => inBranch(it))
     .filter(({ it }) => !st.filter || (it.cell ? it.cell.s : 'none') === st.filter)
     .sort((a, b) => {
       const order = ['absent', 'pending', 'late', 'on_time', 'leave', undefined];
@@ -1184,6 +1200,7 @@ function renderAttDay() {
       const now = new Date();
       const clock = `${p2(now.getHours())}:${p2(now.getMinutes())}`;
       if (!it.active) sub = 'савол намегирад';
+      else if (S.branches.length && !it.branch && S.schedule && S.schedule.sheet_only) sub = 'дар ҷадвал нест — савол намегирад';
       else if (!it.works) sub = 'рӯзи истироҳаташ';
       else if (d.future || (d.today && it.start > clock)) sub = `кораш аз ${it.start}`;
       else sub = 'савол нагирифт';
@@ -1234,6 +1251,22 @@ function monthCell(emp, day) {
   return `<button class="mc mc--none" data-cell="${key}" title="${esc(`${shortName(emp.name)} · ${fmtDay(day.date)}: сабт нест`)}">·</button>`;
 }
 
+/** Омори якчанд корманд (барои филтри филиал) — мисли _summarize дар сервер. */
+function sumSummaries(list) {
+  const t = { on_time: 0, late: 0, absent: 0, leave: 0, pending: 0, late_minutes: 0, present: 0, days: 0 };
+  let arrivalSum = 0;
+  list.forEach((s) => {
+    Object.keys(t).forEach((k) => { t[k] += s[k] || 0; });
+    if (s.avg_arrival && s.present) { const [h, m] = s.avg_arrival.split(':').map(Number); arrivalSum += (h * 60 + m) * s.present; }
+  });
+  const asked = t.present + t.absent + t.pending;
+  t.rate = asked ? Math.round((100 * t.present) / asked) : null;
+  t.punctuality = t.present ? Math.round((100 * t.on_time) / t.present) : null;
+  const avg = t.present ? Math.round(arrivalSum / t.present) : null;
+  t.avg_arrival = avg == null ? null : `${p2(Math.floor(avg / 60))}:${p2(avg % 60)}`;
+  return t;
+}
+
 function sortedEmployees(list, sort) {
   const by = {
     name: (a, b) => shortName(a.name).localeCompare(shortName(b.name)),
@@ -1258,8 +1291,9 @@ function renderAttMonth() {
     </div>
     <button class="btn btn--ghost btn--sm" data-att-csv title="Боргирӣ барои Excel">${ICON.download}<span class="hide-phone">Excel (CSV)</span></button>`;
 
-  const t = d.totals;
-  const emps = sortedEmployees(d.employees, st.sort);
+  attBranchBar(d.employees);
+  const emps = sortedEmployees(d.employees.filter(inBranch), st.sort);
+  const t = S.branch ? sumSummaries(emps.map((e) => e.summary)) : d.totals;
   const legend = `<div class="legend">
     <span><i style="background:var(--ok-soft);box-shadow:inset 0 0 0 1px var(--ok)"></i>Сари вақт</span>
     <span><i style="background:var(--warn-soft);box-shadow:inset 0 0 0 1px var(--warn)"></i>Дер (+дақиқа)</span>
@@ -1679,6 +1713,7 @@ function initTeam() {
           </select>
         </div>
       </div>
+      <div id="tm-branches"></div>
       <div class="resultbar"><span id="tm-count"></span><span class="muted small">${esc(rangeText(workMonth(0).start, workMonth(0).end))}</span></div>
       <div class="team-grid" id="tm-list">${skel(4)}</div>
       <p class="hint-line">Корманди нав худаш пайдо мешавад, вақте дар бот /start-ро пахш кунад. Барои роҳбарон дар профил «Саволи ҳаррӯза»-ро хомӯш кунед.</p>`;
@@ -1692,6 +1727,7 @@ function initTeam() {
     });
   }
   $('#tm-sort').value = st.sort;
+  ensureBranches().then(() => { if (st.data) renderTeam(); });
   loadTeam();
 }
 
@@ -1708,7 +1744,10 @@ async function loadTeam() {
 function renderTeam() {
   const st = S.team;
   $$('#tm-show [data-show]').forEach((b) => b.classList.toggle('is-active', b.dataset.show === st.show));
-  let rows = (st.data || []).slice();
+  const all = (st.data || []).slice();
+  $('#tm-branches').innerHTML = branchChips(all);
+  bindBranchChips($('#tm-branches'), renderTeam);
+  let rows = all.filter(inBranch);
   const counts = { active: rows.filter((w) => w.active).length, off: rows.filter((w) => !w.active).length };
   if (st.show === 'active') rows = rows.filter((w) => w.active);
   if (st.show === 'off') rows = rows.filter((w) => !w.active);
@@ -1735,6 +1774,7 @@ function renderTeam() {
         <span class="meter"><i style="width:${rate || 0}%;background:${rate == null ? 'var(--border-2)' : rate >= 90 ? 'var(--ok)' : rate >= 70 ? 'var(--warn)' : 'var(--danger)'}"></i></span>
       </div>
       <div class="team-card__tags">
+        ${w.branch && branchName(w.branch) ? `<span class="pill pill--brand">${ICON.sheet}${esc(branchName(w.branch))}</span>` : (S.branches.length ? pill('Берун аз ҷадвал', 'muted') : '')}
         ${w.active ? '' : pill('Савол намегирад', 'muted')}
         ${w.active && w.schedule && w.schedule.custom ? pill(`${w.schedule.time}${w.schedule.custom_days ? ' · ' + daysText(w.schedule.days) : ''}`, 'violet') : ''}
         ${m.present ? pill(`Ҳозирӣ ${m.present}`, 'ok') : ''}
@@ -1787,7 +1827,7 @@ async function openEmployee(uid, period = '') {
       <div class="setting"><div class="setting__text"><b>Саволи ҳаррӯзаи давомот</b><small>${d.active ? 'Ҳар рӯзи корӣ мепурсад «Ба кор омадед?»' : 'Хомӯш — ба ӯ савол намеравад'}</small></div>
         <label class="switch"><input type="checkbox" id="emp-active" ${d.active ? 'checked' : ''}><span></span></label></div>
       <div class="setting"><div class="setting__text"><b>Вақти корӣ</b><small>${d.schedule && d.schedule.custom
-          ? `<span class="pill pill--violet" style="margin-right:6px">${d.schedule.source === 'sheet' ? 'аз Google Sheet' : 'алоҳида'}</span>${esc(d.schedule.time || '—')}${d.schedule.sheet_leave ? '–' + esc(d.schedule.sheet_leave) : ''} · ${esc(daysText(d.schedule.days))}`
+          ? `<span class="pill pill--violet" style="margin-right:6px">${d.schedule.source === 'sheet' ? 'аз ҷадвал · ' + esc(branchName(d.schedule.branch) || 'филиал') : 'алоҳида'}</span>${esc(d.schedule.time || '—')}${d.schedule.sheet_leave ? '–' + esc(d.schedule.sheet_leave) : ''} · ${esc(daysText(d.schedule.days))}`
           : `Мисли ҳама: ${esc((d.schedule && d.schedule.time) || 'гузошта нашудааст')} · ${esc(daysText(d.schedule && d.schedule.days))}`}</small></div>
         <button class="btn btn--ghost btn--sm" id="emp-sched">${ICON.clock} Иваз</button></div>
       <div class="setting"><div class="setting__text"><b>Ном дар панел</b><small>${d.alias ? esc(d.alias) : 'Мисли Telegram'}</small></div>
@@ -1876,7 +1916,51 @@ async function openEmployee(uid, period = '') {
 }
 
 /** Вақти кории алоҳида барои як корманд (масалан, аз 14:00). */
+/** Корманди ҷадвал: вақти омадан/рафтан дар ҷадвали Google иваз мешавад (барои ҳамаи моҳҳои оянда). */
+async function openSheetSchedule(d, done) {
+  const sch = d.schedule || {};
+  const days = new Set((d.work_days || sch.days || [0, 1, 2, 3, 4, 5]));
+  openSheet(`
+    <div class="sheet__title">Вақти кории ${esc(shortName(d.name))}</div>
+    <div class="alert alert--info small">${ICON.sheet} Филиали «${esc(branchName(sch.branch) || 'ҷадвал')}». Вақт дар ҷадвали Google («Омадан / Рафтан (брнм)») иваз мешавад — дар варақи ҷорӣ ва ҳамаи моҳҳои оянда.</div>
+    <div class="account-form__row">
+      <label class="field"><span class="field__label">Омадан (брнм)</span>
+        <input class="input" id="ss-in" type="time" value="${esc(sch.sheet_time || sch.time || '')}"></label>
+      <label class="field"><span class="field__label">Рафтан (брнм)</span>
+        <input class="input" id="ss-out" type="time" value="${esc(sch.sheet_leave || '')}"></label>
+    </div>
+    <div class="field"><span class="field__label">Рӯзҳои кор (бот танҳо дар ин рӯзҳо мепурсад)</span>
+      <div class="daychips" id="ss-days">${WD.map((w, i) => `<button type="button" data-d="${i}" class="${days.has(i) ? 'is-on' : ''}">${w}</button>`).join('')}</div></div>
+    <div id="ss-err" class="alert alert--danger" hidden></div>
+    <button class="btn btn--primary btn--lg btn--block" id="ss-save">Сабт кардан</button>`);
+  $('#ss-days').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-d]');
+    if (!b) return;
+    const x = Number(b.dataset.d);
+    if (days.has(x)) days.delete(x); else days.add(x);
+    b.classList.toggle('is-on', days.has(x));
+    haptic('light');
+  });
+  $('#ss-save').addEventListener('click', async () => {
+    const err = $('#ss-err');
+    err.hidden = true;
+    const body = { work_time: $('#ss-in').value, leave_time: $('#ss-out').value, work_days: [...days].sort((a, b) => a - b) };
+    if (!body.work_time) { err.textContent = 'Вақти омаданро нависед'; err.hidden = false; return; }
+    if (!body.work_days.length) { err.textContent = 'Ақаллан як рӯзи кориро интихоб кунед'; err.hidden = false; return; }
+    const btn = $('#ss-save');
+    btn.classList.add('is-loading');
+    const res = await post(`/api/employees/${d.user_id}`, body, { raw: true, quiet: true });
+    btn.classList.remove('is-loading');
+    if (!res || res.error) { err.textContent = (res && res.error) || 'Сабт нашуд'; err.hidden = false; haptic('error'); return; }
+    haptic('success');
+    toast(res.message, 'ok');
+    S.team.data = null;
+    if (done) done(); else closeSheet();
+  });
+}
+
 async function openEmpSchedule(d, done) {
+  if (d.schedule && d.schedule.branch) { openSheetSchedule(d, done); return; }
   const g = (await api('/api/work-schedule', { quiet: true })) || S.schedule || { time: '', days: [0, 1, 2, 3, 4, 5], grace: 10, enabled: false };
   let custom = Boolean(d.schedule && d.schedule.custom);
   const days = new Set(d.work_days || g.days || [0, 1, 2, 3, 4, 5]);
@@ -2191,16 +2275,17 @@ async function initSettings() {
   S.inited.settings = true;
   const root = $('#view-settings');
   root.innerHTML = skel(3);
-  
+
   Promise.all([
-    api('/api/account'), 
-    api('/api/health', { quiet: true }), 
+    api('/api/account'),
+    api('/api/health', { quiet: true }),
     api('/api/backups', { quiet: true }),
     api('/api/work-schedule', { quiet: true }),
-    api('/api/gsheet', { quiet: true })
+    api('/api/gsheet', { quiet: true }),
   ]).then(([acc, health, backups, sch, gs]) => {
     if (!acc) return;
     if (sch) S.schedule = sch;
+    if (gs) rememberBranches(gs);
     const theme = document.documentElement.dataset.theme;
     const poll = health && health.polling;
     const upD = health ? Math.floor(health.uptime / 86400) : 0;
@@ -2210,35 +2295,52 @@ async function initSettings() {
     const bList = (backups && backups.items) || [];
     const botOk = poll && poll.ok && !poll.conflict;
     const disk = health && health.disk;
+    const free = disk ? Math.max(0, 100 - disk.used_pct) : null;
+    const gsTone = !gs || !gs.configured ? 'warn' : !gs.enabled ? 'muted' : gs.status.ok === false ? 'danger' : gs.status.ok ? 'ok' : 'muted';
+    const gsLabel = !gs || !gs.configured ? 'танзим нашуда' : !gs.enabled ? 'хомӯш' : gs.status.ok === false ? 'хато' : `${(gs.books || []).length} филиал`;
 
     root.innerHTML = `
+      <section class="set-hero">
+        <span class="brandplate brandplate--hero"><img src="static/logo-softclub.svg" alt="SoftClub" width="141" height="64"></span>
+        <div class="set-hero__text">
+          <h2>HR Control</h2>
+          <p>Давомоти кормандон · боти Telegram · ҷадвалҳои Google</p>
+        </div>
+        <div class="set-hero__chips">
+          <span class="hero-chip hero-chip--${botOk ? 'ok' : 'danger'}"><i></i>Бот: ${botOk ? 'фаъол' : poll && poll.conflict ? 'дар ҷои дигар ҳам кор мекунад' : 'ҷавоб намедиҳад'}</span>
+          <span class="hero-chip hero-chip--${gsTone}"><i></i>Ҷадвалҳо: ${esc(gsLabel)}</span>
+          ${disk ? `<span class="hero-chip hero-chip--${free <= 10 ? 'danger' : free <= 20 ? 'warn' : 'ok'}"><i></i>Диск: ${free}% холӣ</span>` : ''}
+          <span class="hero-chip hero-chip--muted">${esc($('#side-meta') ? $('#side-meta').textContent.replace('SoftClub HR · ', '') : '')}</span>
+        </div>
+      </section>
+
+      <section class="panel panel--feature" id="gs-panel">${gs ? gsPanelHtml(gs) : ''}</section>
+
       <div class="settings-grid">
         <section class="panel">
           <div class="panel__head">
-            <div class="panel__ico">${ICON.sun}</div>
-            <div class="panel__title"><h2>Танзимоти корӣ</h2><p>Мавзӯъ, вақти кор ва ҳолати бот</p></div>
+            <div class="panel__ico">${ICON.clock}</div>
+            <div class="panel__title"><h2>Вақти кор ва бот</h2><p>Саволи ҳаррӯза, ҳолати бот ва намуди панел</p></div>
           </div>
           <div class="panel__body">
             <div class="rowset">
-              <div class="rowset__text"><b>Мавзӯи панел</b><small>${theme === 'dark' ? 'Ҳозир мавзӯи торик фаъол аст' : 'Ҳозир мавзӯи равшан фаъол аст'}</small></div>
-              <button class="btn btn--ghost btn--sm" data-action="theme">${theme === 'dark' ? ICON.sun + ' Равшан кардан' : 'Торик кардан'}</button>
-            </div>
-            <div class="rowset">
-              <div class="rowset__text"><b>Вақти корӣ</b><small>${S.schedule && S.schedule.enabled ? esc(`${daysText(S.schedule.days)} · сари вақт то ${onTimeUntil(S.schedule)}${S.schedule.report ? ' · ҳисобот ба гурӯҳ' : ''}`) : 'Ҳоло гузошта нашудааст — бот савол намефиристад'}</small></div>
-              <button class="btn ${S.schedule && S.schedule.enabled ? 'btn--ghost' : 'btn--primary'} btn--sm" data-open-schedule>${S.schedule && S.schedule.enabled ? ICON.edit + ' Тағйир додан' : 'Гузоштан'}</button>
+              <div class="rowset__text"><b>Вақти кории умумӣ</b><small>${S.schedule && S.schedule.enabled ? esc(`${daysText(S.schedule.days)} · сари вақт то ${onTimeUntil(S.schedule)}${S.schedule.report ? ' · ҳисобот ба гурӯҳ' : ''}`) : 'Гузошта нашудааст — бот савол намефиристад'}${S.schedule && S.schedule.sheet_times ? '<br>Вақти ҳар корманд аз ҷадвали Google («Омадан (брнм)») гирифта мешавад' : ''}</small></div>
+              <button class="btn ${S.schedule && S.schedule.enabled ? 'btn--ghost' : 'btn--primary'} btn--sm" data-open-schedule>${S.schedule && S.schedule.enabled ? ICON.edit + ' Иваз кардан' : 'Гузоштан'}</button>
             </div>
             <div class="rowset">
               <div class="rowset__text"><b>Ҳолати бот</b><small><i class="status-dot" style="background:${botOk ? 'var(--ok)' : 'var(--danger)'}"></i>${poll && poll.conflict ? 'Ҳамин бот дар ҷои дигар ҳам кор мекунад — онро хомӯш кунед' : botOk ? `Кор мекунад · ${uptime} бе таваққуф` : 'Ҷавоб намедиҳад — худаш аз нав оғоз мешавад'}</small></div>
               <span class="tag ${botOk ? 'tag--ok' : 'tag--danger'}">${botOk ? 'Фаъол' : 'Хато'}</span>
             </div>
             <div class="rowset">
-              <div class="rowset__text"><b>Ҷои холӣ дар диск</b><small>${disk ? `${fmtBytes(disk.free)} холӣ аз ${fmtBytes(disk.total)}${disk.used_pct >= 85 ? ' — фазо кам шудааст, назорат лозим аст' : ''}` : 'Ҳоло дастрас нест'}</small></div>
-              ${disk ? `<span class="tag ${disk.used_pct >= 90 ? 'tag--danger' : disk.used_pct >= 80 ? 'tag--warn' : 'tag--ok'}">${Math.max(0, 100 - disk.used_pct)}% холӣ</span>` : ''}
+              <div class="rowset__text"><b>Ҷои холии диски сервер</b><small>${disk ? `${fmtBytes(disk.free)} холӣ аз ${fmtBytes(disk.total)}${free <= 15 ? ' — ҷой кам мондааст' : ''}` : 'Ҳоло маълум нест'}</small></div>
+              ${disk ? `<span class="tag ${free <= 10 ? 'tag--danger' : free <= 20 ? 'tag--warn' : 'tag--ok'}">${free}% холӣ</span>` : ''}
+            </div>
+            <div class="rowset">
+              <div class="rowset__text"><b>Намуди панел</b><small>${theme === 'dark' ? 'Ҳоло торик' : 'Ҳоло равшан'}</small></div>
+              <button class="btn btn--ghost btn--sm" data-action="theme">${theme === 'dark' ? ICON.sun + ' Равшан' : 'Торик'}</button>
             </div>
           </div>
         </section>
-
-        <section class="panel" id="gs-panel">${gs ? gsPanelHtml(gs) : ''}</section>
 
         <section class="panel">
           <div class="panel__head">
@@ -2251,18 +2353,18 @@ async function initSettings() {
               <button class="btn btn--ghost btn--sm" id="set-backup">${ICON.download} .db</button>
             </div>
             <div class="rowset">
-              <div class="rowset__text"><b>Ҳисоботи давомот</b><small>Моҳи кории ҷорӣ, формати CSV</small></div>
+              <div class="rowset__text"><b>Ҳисоботи давомот</b><small>Моҳи кории ҷорӣ, барои Excel (CSV)</small></div>
               <button class="btn btn--ghost btn--sm" id="set-att-csv">${ICON.download} CSV</button>
             </div>
             <div class="rowset">
-              <div class="rowset__text"><b>Ҳисоботи дархостҳо</b><small>Тамоми дархостҳо, формати CSV</small></div>
+              <div class="rowset__text"><b>Ҳисоботи дархостҳо</b><small>Ҳамаи дархостҳо, барои Excel (CSV)</small></div>
               <button class="btn btn--ghost btn--sm" id="set-csv">${ICON.download} CSV</button>
             </div>
             <div class="panel__sub"><b>Нусхаҳои эҳтиётӣ</b><span>${bList.length ? `${bList.length} файл` : 'ҳоло нест'}</span></div>
             ${bList.length ? `<ul class="backup-list">${bList.slice(0, 4).map((b) => `
               <li><span class="backup-list__ico">${ICON.lock}</span>
                 <div><b>${esc(fmtDateTime(b.time))}</b><small>${fmtBytes(b.size)} · ${esc(b.name.replace(/^softclub_/, '').replace(/\.db$/, ''))}</small></div></li>`).join('')}</ul>`
-              : `<p class="panel__note">Пеш аз ҳар тозакунӣ нусхаи эҳтиётӣ худкор сохта мешавад.</p>`}
+              : `<p class="panel__note">Пеш аз ҳар тоза кардан нусхаи эҳтиётӣ худкор сохта мешавад.</p>`}
           </div>
         </section>
 
@@ -2299,21 +2401,21 @@ async function initSettings() {
           </div>
           <div class="panel__body">
             <div class="danger-row">
-              <div class="rowset__text"><b>Маълумоти кӯҳна</b><small>Дархостҳо ва давомоти то санаи интихобшуда (бо ҳамон рӯз)</small></div>
+              <div class="rowset__text"><b>Маълумоти кӯҳна</b><small>Дархостҳо ва давомот то санаи интихобшуда (бо ҳамон рӯз)</small></div>
               <div class="danger-row__action">
                 <input type="date" class="input" id="wipe-before" max="${todayYmd()}" aria-label="То сана">
                 <button class="btn btn--soft-danger btn--sm" id="wipe-old">Тоза кардан</button>
               </div>
             </div>
             <div class="danger-row">
-              <div class="rowset__text"><b>Ҳамаи дархостҳо ва давомот</b><small>Рӯйхати кормандон ва танзимот боқӣ мемонанд</small></div>
+              <div class="rowset__text"><b>Ҳамаи дархостҳо ва давомот</b><small>Рӯйхати кормандон ва танзимот мемонанд</small></div>
               <div class="danger-row__action"><button class="btn btn--soft-danger btn--sm" id="wipe-req">${ICON.trash} Тоза кардан</button></div>
             </div>
             <div class="danger-row">
-              <div class="rowset__text"><b>Тозакунии пурра</b><small>Ҳамаи маълумот ва кормандон; рақамгузорӣ аз №1 сар мешавад</small></div>
+              <div class="rowset__text"><b>Тоза кардани пурра</b><small>Ҳамаи маълумот ва кормандон; рақамгузорӣ аз №1 сар мешавад</small></div>
               <div class="danger-row__action"><button class="btn btn--danger btn--sm" id="wipe-all">${ICON.trash} Тоза кардан</button></div>
             </div>
-            <p class="panel__note">Логин, рамз ва вақти корӣ нест карда намешаванд.</p>
+            <p class="panel__note">Логин, рамз, вақти корӣ ва ҷадвалҳои Google дахл карда намешаванд.</p>
           </div>
         </section>
       </div>`;
@@ -2335,58 +2437,78 @@ async function initSettings() {
   });
 }
 
-/* ══════════════ GOOGLE SHEET ══════════════ */
+/* ══════════════ ҶАДВАЛҲОИ GOOGLE (ФИЛИАЛҲО) ══════════════ */
 
-function gsStatus(g) {
-  const st = g.status || {};
-  if (!g.configured) return { tag: 'tag--warn', label: 'Танзим нашуда', text: st.error || 'Калиди Google дар сервер гузошта нашудааст' };
-  if (!g.enabled) return { tag: '', label: 'Хомӯш', text: 'Давомот ба ҷадвал навишта намешавад' };
-  if (st.ok === false) return { tag: 'tag--danger', label: 'Хато', text: st.error || 'Google ҷавоб надод' };
-  if (st.ok) return { tag: 'tag--ok', label: 'Пайваст', text: `Охирин навсозӣ ${fmtRelative(st.last_ok)} · варақи «${g.tab || st.tab}»` };
-  return { tag: '', label: 'Интизорӣ', text: 'Бо Google пайваст мешавад…' };
+function bookTone(b, g) {
+  const st = b.status || {};
+  if (!g.configured) return { tone: 'warn', label: 'Танзим нашуда' };
+  if (!g.enabled) return { tone: 'muted', label: 'Хомӯш' };
+  if (st.ok === false) return { tone: 'danger', label: 'Хато' };
+  if (st.ok) return { tone: 'ok', label: 'Пайваст' };
+  return { tone: 'muted', label: 'Интизорӣ' };
 }
 
 function gsPanelHtml(g) {
-  const s = gsStatus(g);
   const st = g.status || {};
-  const rows = (g.rows || []).filter((r) => r.name);
-  const linked = rows.filter((r) => r.user_id).length;
-  const unl = (g.unlinked || []).length;
   const live = g.configured && g.enabled;
+  const books = g.books || [];
+  const cards = books.map((b) => {
+    const t = bookTone(b, g);
+    const pctLinked = b.total ? Math.round((100 * b.linked) / b.total) : 0;
+    const err = live && b.status && b.status.ok === false ? b.status.error : '';
+    return `<article class="branch branch--${t.tone}">
+      <div class="branch__top">
+        <span class="branch__ico">${ICON.sheet}</span>
+        <div class="branch__who"><b>${esc(b.name)}</b><small>${esc(b.title || 'Ҷадвали Google')}${b.tab ? ` · варақи «${esc(b.tab)}»` : ''}</small></div>
+        <span class="tag tag--${t.tone === 'muted' ? '' : t.tone}">${esc(t.label)}</span>
+        <button class="iconbtn branch__more" data-gs-edit="${esc(b.id)}" aria-label="Танзими филиал" title="Номи филиал / бардоштан">${ICON.edit}</button>
+      </div>
+      ${err ? `<div class="alert alert--danger small">${esc(err)}</div>` : ''}
+      <div class="branch__stat">
+        <div title="Кормандони пайвастшуда аз ҳамаи сатрҳо"><b>${b.linked}</b><span> / ${b.total}</span><small>пайваст</small></div>
+        <div title="Охирин навсозӣ"><b>${esc(b.status && b.status.last_ok ? fmtClock(b.status.last_ok) : '—')}</b><small>навсозӣ</small></div>
+        <div title="Катакҳое, ки бот навишт"><b>${b.status && b.status.writes ? b.status.writes : 0}</b><small>навишта</small></div>
+      </div>
+      <span class="meter branch__meter"><i style="width:${pctLinked}%;background:${pctLinked === 100 ? 'var(--ok)' : 'var(--brand)'}"></i></span>
+      <div class="branch__actions">
+        <button class="btn btn--primary btn--sm" data-gs-links="${esc(b.id)}" ${b.total ? '' : 'disabled'}>${ICON.team} Кормандон</button>
+        <a class="btn btn--ghost btn--sm" href="${esc(b.url)}" target="_blank" rel="noopener" data-gs-open="${esc(b.url)}">${ICON.sheet} Ҷадвал</a>
+      </div>
+    </article>`;
+  }).join('');
+  const toggle = (key, on, title, text) => `
+    <label class="opt">
+      <span class="opt__text"><b>${title}</b><small>${text}</small></span>
+      <span class="switch"><input type="checkbox" data-gs="${key}" ${on ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></span>
+    </label>`;
   return `
     <div class="panel__head">
       <div class="panel__ico">${ICON.sheet}</div>
-      <div class="panel__title"><h2>Google Sheet</h2><p>Ҷадвали давомоти корхона · ҳар моҳ варақи нав</p></div>
-      <span class="tag ${s.tag}">${esc(s.label)}</span>
+      <div class="panel__title"><h2>Ҷадвалҳои Google — филиалҳо</h2><p>Омадан ва рафтан худкор ба ҷадвали ҳар филиал навишта мешавад · ҳар моҳ варақи нав</p></div>
+      <button class="btn btn--ghost btn--sm" id="gs-sync" ${live && books.length ? '' : 'disabled'}>${ICON.refresh}<span class="hide-phone">Ҳозир навсозӣ</span></button>
     </div>
     <div class="panel__body">
-      ${live && st.ok === false ? `<div class="alert alert--danger small" style="margin-top:12px">${esc(s.text)}${g.email && /403/.test(st.error || '') ? `<span class="mono" style="display:block;margin-top:6px">${esc(g.email)}</span>` : ''}</div>` : ''}
-      <div class="rowset">
-        <div class="rowset__text"><b>Ҳолат</b><small>${esc(s.text)}${live && st.writes ? ` · ${st.writes} ячейка навишта шуд` : ''}${live && st.conflicts ? ` · ${st.conflicts} ячейкаи дастӣ бетағйир монд` : ''}</small></div>
-        <button class="btn btn--ghost btn--sm" id="gs-sync" ${live ? '' : 'disabled'}>${ICON.refresh} Ҳозир навсозӣ</button>
+      ${!g.configured ? `<div class="alert alert--warn small" style="margin-top:14px">${esc(st.error || 'Калиди Google дар сервер нест')}</div>` : ''}
+      ${live && st.ok === false && books.length > 1 ? `<div class="alert alert--danger small" style="margin-top:14px">${esc(st.error)}</div>` : ''}
+      <div class="branch-grid">
+        ${cards}
+        <button class="branch branch--add" id="gs-add" ${g.configured ? '' : 'disabled'}>
+          <span class="branch__plus">+</span><b>Илова кардани филиал</b><small>Ҷадвали филиали дигар — бо ҳамин сохтор</small>
+        </button>
       </div>
-      <div class="rowset">
-        <div class="rowset__text"><b>Кормандон дар ҷадвал</b><small>${rows.length ? `${linked} аз ${rows.length} сатр ба бот пайваст` : 'Ҷадвал ҳанӯз хонда нашудааст'}${unl ? ` · ${unl} корманди бот пайваст нест` : ''}</small></div>
-        <button class="btn ${rows.length && linked < rows.length ? 'btn--primary' : 'btn--ghost'} btn--sm" id="gs-links" ${rows.length ? '' : 'disabled'}>${ICON.team} Пайваст кардан</button>
+      <div class="opt-list">
+        ${toggle('enabled', g.enabled, 'Навиштан ба ҷадвалҳо', 'Вақти омадан ва рафтан ҳамон лаҳза ба варақи моҳи ҷорӣ меравад')}
+        ${toggle('times', g.times, 'Вақти саволи бот аз ҷадвал', 'Бот дар соати «Омадан (брнм)»-и ҳар корманд мепурсад ва дериро аз ҳамон ҳисоб мекунад')}
+        ${toggle('only', g.only, 'Танҳо кормандони ҷадвал савол мегиранд', 'Касе, ки дар ягон ҷадвал нест (масалан роҳбар), ҳар рӯз савол намегирад')}
+        ${toggle('autolink', g.autolink, 'Пайвасти худкор аз рӯи ном', 'Хомӯш тавсия мешавад — корманд танҳо аз рӯи «Телеграм id» шинохта мешавад')}
       </div>
-      <div class="rowset">
-        <div class="rowset__text"><b>Навиштан ба ҷадвал</b><small>Вақти омадан ва рафтан ҳамон лаҳза ба варақи моҳ меравад</small></div>
-        <label class="switch"><input type="checkbox" data-gs="enabled" ${g.enabled ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
-      </div>
-      <div class="rowset">
-        <div class="rowset__text"><b>Вақти омадан аз ҷадвал</b><small>Бот дар соати «Омадан (брнм)»-и ҳар корманд мепурсад ва дериро аз ҳамон ҳисоб мекунад</small></div>
-        <label class="switch"><input type="checkbox" data-gs="times" ${g.times ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
-      </div>
-      <div class="rowset">
-        <div class="rowset__text"><b>Пайвасти худкор аз рӯи ном</b><small>Хомӯш (тавсия) — танҳо аз рӯи «Телеграм id». Фаъол — агар номи Telegram ва номи расмӣ қариб якхела бошанд</small></div>
-        <label class="switch"><input type="checkbox" data-gs="autolink" ${g.autolink ? 'checked' : ''} ${g.configured ? '' : 'disabled'}><span></span></label>
-      </div>
-      <p class="panel__note">Бот танҳо ячейкаи холӣ ё навиштаи худашро иваз мекунад — навиштаи дастӣ ҳеҷ гоҳ вайрон намешавад.${g.since ? ` Аз ${esc(fmtDateShort(g.since))} навишта мешавад.` : ''}
-        ${g.url ? `<a href="${esc(g.url)}" target="_blank" rel="noopener" id="gs-open">Кушодани ҷадвал ↗</a>` : ''}</p>
+      <p class="panel__note">Бот танҳо катакҳои холӣ ё навиштаи худашро иваз мекунад — навиштаи дастӣ ҳеҷ гоҳ вайрон намешавад.
+        ${g.email ? `Барои филиали нав ҷадвалро ба <span class="mono">${esc(g.email)}</span> бо ҳуқуқи «Редактор» дастрас кунед. <button type="button" class="btn btn--link" data-copy="${esc(g.email)}">Нусха гирифтан</button>` : ''}</p>
     </div>`;
 }
 
 function renderGsPanel(g) {
+  rememberBranches(g);
   const box = $('#gs-panel');
   if (!box) return;
   box.innerHTML = gsPanelHtml(g);
@@ -2404,38 +2526,159 @@ function bindGsPanel(g) {
     if (!res) { toast('Алоқа нест', 'danger'); return; }
     if (res.error) { haptic('error'); toast(res.error, 'danger'); } else { haptic('success'); toast(res.message, 'ok'); }
     const fresh = res.error ? await api('/api/gsheet', { quiet: true }) : res;
-    if (fresh && fresh.rows) renderGsPanel(fresh);
+    if (fresh && fresh.books) renderGsPanel(fresh);
   });
-  const links = $('#gs-links', box);
-  if (links) links.addEventListener('click', () => openSheetLinks(g));
+  $$('[data-gs-links]', box).forEach((b) => b.addEventListener('click', () => openSheetLinks(g, b.dataset.gsLinks)));
+  $$('[data-gs-edit]', box).forEach((b) => b.addEventListener('click', () => openBranchEdit(g, b.dataset.gsEdit)));
+  const add = $('#gs-add', box);
+  if (add) add.addEventListener('click', () => openBranchAdd(g));
   $$('[data-gs]', box).forEach((input) => input.addEventListener('change', async () => {
     const res = await post('/api/gsheet/settings', { [input.dataset.gs]: input.checked }, { raw: true, quiet: true });
     if (!res || res.error) { input.checked = !input.checked; toast((res && res.error) || 'Сабт нашуд', 'danger'); return; }
     haptic('success');
     toast(res.message, 'ok');
     renderGsPanel(res);
-    if (input.dataset.gs === 'times') refreshAttViewsQuiet();
+    if (input.dataset.gs === 'times' || input.dataset.gs === 'only') refreshAttViewsQuiet();
   }));
-  const open = $('#gs-open', box);
-  if (open && tg && tg.openLink) open.addEventListener('click', (e) => { e.preventDefault(); try { tg.openLink(g.url); } catch (_) { window.open(g.url, '_blank'); } });
+  $$('[data-copy]', box).forEach((b) => b.addEventListener('click', () => copyText(b.dataset.copy)));
+  $$('[data-gs-open]', box).forEach((a) => {
+    if (tg && tg.openLink) a.addEventListener('click', (e) => { e.preventDefault(); try { tg.openLink(a.dataset.gsOpen); } catch (_) { window.open(a.dataset.gsOpen, '_blank'); } });
+  });
 }
 
-/** Пайвасти кормандони бот ба сатрҳои ҷадвал (сутуни «Телеграм id»).
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Нусха гирифта шуд', 'ok'); } catch (_) { promptDialog({ title: 'Нусха гиред', label: 'Матн', value: text, okText: 'Тайёр' }); }
+}
+
+/** Илова кардани филиал: ном + суроғаи ҷадвал (сохтор бояд мисли ҷадвали аввал бошад). */
+function openBranchAdd(g) {
+  openSheet(`
+    <div class="sheet__title">Филиали нав</div>
+    <p class="sheet__text">Ҷадвали филиал бояд айнан мисли ҷадвали аввал бошад: «Номи Корманд», «Телеграм id», «Телефон», «Омадан / Рафтан (брнм)», рӯзҳо бо «Омад / Рафт».</p>
+    <ol class="steps">
+      <li>Ҷадвалро кушоед → <b>«Настройки доступа»</b> (Share)</li>
+      <li>Ин email-ро бо ҳуқуқи <b>«Редактор»</b> илова кунед:<br><span class="mono">${esc(g.email || '')}</span> <button type="button" class="btn btn--link" data-copy="${esc(g.email || '')}">Нусха</button></li>
+      <li>Суроғаи ҷадвалро ин ҷо гузоред</li>
+    </ol>
+    <label class="field"><span class="field__label">Номи филиал</span>
+      <input class="input" id="br-name" type="text" maxlength="60" placeholder="Масалан: Профсоюз"></label>
+    <label class="field"><span class="field__label">Суроғаи ҷадвал</span>
+      <input class="input" id="br-url" type="url" placeholder="https://docs.google.com/spreadsheets/d/…"></label>
+    <div id="br-err" class="alert alert--danger" hidden></div>
+    <button class="btn btn--primary btn--lg btn--block" id="br-save">Санҷидан ва илова кардан</button>`);
+  $$('#sheet-body [data-copy]').forEach((b) => b.addEventListener('click', () => copyText(b.dataset.copy)));
+  setTimeout(() => $('#br-name') && $('#br-name').focus(), 80);
+  $('#br-save').addEventListener('click', async () => {
+    const err = $('#br-err');
+    err.hidden = true;
+    const name = $('#br-name').value.trim();
+    const url = $('#br-url').value.trim();
+    if (!name) { err.textContent = 'Номи филиалро нависед'; err.hidden = false; return; }
+    if (!url) { err.textContent = 'Суроғаи ҷадвалро гузоред'; err.hidden = false; return; }
+    const btn = $('#br-save');
+    btn.classList.add('is-loading');
+    const res = await post('/api/gsheet/books', { action: 'add', name, url }, { raw: true, quiet: true });
+    btn.classList.remove('is-loading');
+    if (!res || res.error) { err.textContent = (res && res.error) || 'Алоқа нест'; err.hidden = false; haptic('error'); return; }
+    haptic('success');
+    closeSheet();
+    toast(res.message, 'ok');
+    renderGsPanel(res);
+  });
+}
+
+function openBranchEdit(g, id) {
+  const b = (g.books || []).find((x) => x.id === id);
+  if (!b) return;
+  openSheet(`
+    <div class="sheet__title">Филиали «${esc(b.name)}»</div>
+    <p class="sheet__text">${esc(b.title || 'Ҷадвали Google')}${b.tab ? ` · варақи ҷорӣ «${esc(b.tab)}»` : ''}</p>
+    <label class="field"><span class="field__label">Номи филиал</span>
+      <input class="input" id="br-name" type="text" maxlength="60" value="${esc(b.name)}"></label>
+    <div id="br-err" class="alert alert--danger" hidden></div>
+    <button class="btn btn--primary btn--lg btn--block" id="br-save">Сабт кардан</button>
+    <button class="btn btn--soft-danger btn--block" id="br-remove">${ICON.trash} Аз система бардоштан</button>
+    <p class="panel__note">Бардоштан худи ҷадвалро тағйир намедиҳад — танҳо бот дигар ба он наменависад.</p>`);
+  const send = async (body, btn) => {
+    const err = $('#br-err');
+    err.hidden = true;
+    btn.classList.add('is-loading');
+    const res = await post('/api/gsheet/books', body, { raw: true, quiet: true });
+    btn.classList.remove('is-loading');
+    if (!res || res.error) { err.textContent = (res && res.error) || 'Алоқа нест'; err.hidden = false; haptic('error'); return; }
+    haptic('success');
+    closeSheet();
+    toast(res.message, 'ok');
+    renderGsPanel(res);
+    refreshAttViewsQuiet();
+  };
+  $('#br-save').addEventListener('click', () => send({ action: 'rename', id, name: $('#br-name').value.trim() }, $('#br-save')));
+  $('#br-remove').addEventListener('click', async () => {
+    const ok = await confirmDialog({ title: `«${b.name}» бардошта шавад?`, text: 'Бот дигар ба ин ҷадвал наменависад ва кормандонаш «берун аз ҷадвал» мешаванд. Худи ҷадвал бетағйир мемонад.', okText: 'Бардоштан', danger: true });
+    if (!ok) { openBranchEdit(g, id); return; }
+    const res = await post('/api/gsheet/books', { action: 'remove', id }, { raw: true });
+    if (!res) return;
+    toast(res.message, 'ok');
+    renderGsPanel(res);
+    refreshAttViewsQuiet();
+  });
+}
+
+/* ── Филтри филиал (Кормандон ва Давомот) ── */
+
+function rememberBranches(g) {
+  S.branches = ((g && g.books) || []).map((b) => ({ id: b.id, name: b.name }));
+  if (S.branch && S.branch !== '__none' && !S.branches.find((b) => b.id === S.branch)) S.branch = '';
+}
+
+async function ensureBranches() {
+  if (S.branchesLoaded) return;
+  S.branchesLoaded = true;
+  const g = await api('/api/gsheet', { quiet: true });
+  if (g) rememberBranches(g);
+}
+
+const branchName = (id) => { const b = (S.branches || []).find((x) => x.id === id); return b ? b.name : ''; };
+const inBranch = (item) => !S.branch || (S.branch === '__none' ? !item.branch : item.branch === S.branch);
+
+function branchChips(list, onChange) {
+  const branches = S.branches || [];
+  if (!branches.length) return '';
+  const count = (fn) => list.filter(fn).length;
+  const opts = [['', 'Ҳамаи филиалҳо', list.length]]
+    .concat(branches.map((b) => [b.id, b.name, count((x) => x.branch === b.id)]))
+    .concat([['__none', 'Берун аз ҷадвал', count((x) => !x.branch)]]);
+  return `<div class="branch-filter" role="tablist" aria-label="Филиал">${opts
+    .filter(([id, , n]) => id === '' || id === S.branch || n || id !== '__none')
+    .map(([id, label, n]) => `<button class="bchip${S.branch === id ? ' is-active' : ''}" data-branch="${esc(id)}" role="tab">${id && id !== '__none' ? ICON.sheet : ''}${esc(label)}<b>${n}</b></button>`).join('')}</div>`;
+}
+
+function bindBranchChips(root, rerender) {
+  $$('[data-branch]', root).forEach((b) => b.addEventListener('click', () => {
+    S.branch = b.dataset.branch;
+    store.set('sc_branch', S.branch);
+    haptic('light');
+    rerender();
+  }));
+}
+
+/** Пайвасти кормандони бот ба сатрҳои ҷадвали филиал (сутуни «Телеграм id»).
  *  Рӯйхати сатрҳо → пахш → интихоби корманде, ки дар бот /start кардааст (бо ҷустуҷӯ). */
-function openSheetLinks(g) {
+function openSheetLinks(g, bookId) {
   let state = g;
   let query = '';
+  const book = () => (state.books || []).find((b) => b.id === bookId) || (state.books || [])[0] || { rows: [] };
   const tgName = (e) => shortName(e.tg_name || e.name);
   const idLine = (e) => [e.username ? '@' + e.username : '', `ID ${e.user_id}`].filter(Boolean).join(' · ');
 
   async function link(row, userId) {
-    const body = { row: row.row, name: row.name, user_id: userId };
+    const body = { book: book().id, row: row.row, name: row.name, user_id: userId };
     const res = await post('/api/gsheet/link', body, { raw: true, quiet: true });
     if (!res || res.error) {
       haptic('error');
       toast((res && res.error) || 'Алоқа нест', 'danger');
       const fresh = await api('/api/gsheet', { quiet: true });
-      if (fresh && fresh.rows) { state = fresh; renderGsPanel(fresh); }
+      if (fresh && fresh.books) { state = fresh; renderGsPanel(fresh); }
       drawList();
       return;
     }
@@ -2447,7 +2690,8 @@ function openSheetLinks(g) {
   }
 
   function drawList() {
-    const rows = (state.rows || []).filter((r) => r.name);
+    const b = book();
+    const rows = (b.rows || []).filter((r) => r.name);
     const emps = new Map((state.employees || []).map((e) => [e.user_id, e]));
     const linked = rows.filter((r) => r.user_id).length;
     const list = rows.map((r, i) => {
@@ -2459,7 +2703,7 @@ function openSheetLinks(g) {
       } else if (r.dup) {
         pick = `<span class="gs-pick__warn">ID ${esc(r.tg)} дар 2 сатр — интихоб кунед</span>`;
       } else if (r.unknown) {
-        pick = `<span class="gs-pick__warn">ID ${esc(r.tg)} ҳанӯз /start накардааст</span>`;
+        pick = `<span class="gs-pick__warn">ID ${esc(r.tg)} ҳанӯз ботро накушодааст</span>`;
       } else {
         pick = `<span class="gs-pick__add">${ICON.user} Пайваст кардан</span>`;
       }
@@ -2470,23 +2714,24 @@ function openSheetLinks(g) {
       </button>`;
     }).join('');
     $('#sheet-body').innerHTML = `
-      <div class="sheet__title">Кормандон дар ҷадвал</div>
+      <div class="sheet__title">Кормандони «${esc(b.name || '')}»</div>
       <p class="sheet__text">Бот кормандро <b>танҳо аз рӯи «Телеграм id»</b> мешиносад. Сатрро пахш кунед ва аз рӯйхати кормандоне, ки ботро кушодаанд, ҳамон одамро интихоб кунед — ID худкор ба ҷадвал навишта мешавад.</p>
-      <div class="gs-sum">${pill(`${linked} аз ${rows.length} пайваст`, linked === rows.length && rows.length ? 'ok' : 'muted')}${pill(`варақи «${state.tab || ''}»`, 'muted')}</div>
-      <div class="gs-list">${list || emptyState('Дар ҷадвал корманд нест')}</div>`;
-    $$('#sheet-body .gs-row').forEach((b) => b.addEventListener('click', () => { haptic('light'); drawPick(rows[Number(b.dataset.i)]); }));
+      <div class="gs-sum">${pill(`${linked} аз ${rows.length} пайваст`, linked === rows.length && rows.length ? 'ok' : 'muted')}${b.tab ? pill(`варақи «${b.tab}»`, 'muted') : ''}</div>
+      <div class="gs-list">${list || `<div class="card__body">${emptyState('Дар ҷадвал корманд нест', 'Ҷадвал ҳанӯз хонда нашудааст — «Ҳозир навсозӣ»-ро пахш кунед')}</div>`}</div>`;
+    $$('#sheet-body .gs-row').forEach((el) => el.addEventListener('click', () => { haptic('light'); drawPick(rows[Number(el.dataset.i)]); }));
   }
 
   function drawPick(row) {
-    const rows = (state.rows || []).filter((r) => r.name);
+    const b = book();
+    const rows = (b.rows || []).filter((r) => r.name);
     const rowOf = new Map(rows.filter((r) => r.user_id).map((r) => [r.user_id, r.row]));
-    const rank = (e) => (e.user_id === row.user_id ? 0 : rowOf.has(e.user_id) ? 2 : 1);   // ҳамин сатр → озод → дигарон
-    const people = (state.employees || []).slice().sort((a, b) =>
-      (rank(a) - rank(b)) || (b.active - a.active) || tgName(a).localeCompare(tgName(b)));
+    const rank = (e) => (e.user_id === row.user_id ? 0 : rowOf.has(e.user_id) ? 3 : e.branch && e.branch !== b.id ? 2 : 1);
+    const people = (state.employees || []).slice().sort((x, y) =>
+      (rank(x) - rank(y)) || (y.active - x.active) || tgName(x).localeCompare(tgName(y)));
     $('#sheet-body').innerHTML = `
       <button type="button" class="btn btn--ghost btn--sm gs-back" id="gs-back">${ICON.left} Ҳамаи сатрҳо</button>
       <div class="sheet__title">${esc(row.name)}</div>
-      <p class="sheet__text">Сатри ${row.row} · ${esc(row.plan_in || '—')}${row.plan_out ? '–' + esc(row.plan_out) : ''}. Корманде, ки дар бот /start кардааст, интихоб кунед:</p>
+      <p class="sheet__text">${esc(b.name)} · сатри ${row.row} · ${esc(row.plan_in || '—')}${row.plan_out ? '–' + esc(row.plan_out) : ''}. Корманде, ки ботро кушодааст, интихоб кунед:</p>
       <input class="input" id="gs-q" type="search" placeholder="Ҷустуҷӯ: ном, @username ё ID" value="${esc(query)}" autocomplete="off">
       <div class="gs-list" id="gs-people"></div>
       ${row.user_id ? `<button type="button" class="btn btn--soft-danger btn--block" id="gs-unlink">${ICON.x} Пайвастро бекор кардан</button>` : ''}
@@ -2497,19 +2742,22 @@ function openSheetLinks(g) {
         .some((x) => String(x).toLowerCase().includes(q)));
       $('#gs-people').innerHTML = shown.map((e) => {
         const here = e.user_id === row.user_id;
-        const other = rowOf.has(e.user_id) && !here ? `ҳоло дар сатри ${rowOf.get(e.user_id)} — ба ин сатр мегузарад` : '';
-        const tag = here ? pill('ҳамин сатр', 'ok') : rowOf.has(e.user_id) ? pill(`сатри ${rowOf.get(e.user_id)}`, 'muted') : pill('озод', 'info');
+        const elsewhere = e.branch && e.branch !== b.id ? branchName(e.branch) : '';
+        const note = rowOf.has(e.user_id) && !here ? `ҳоло дар сатри ${rowOf.get(e.user_id)} — ба ин сатр мегузарад`
+          : elsewhere ? `ҳоло дар филиали «${elsewhere}» — ба ин филиал мегузарад` : '';
+        const tag = here ? pill('ҳамин сатр', 'ok') : rowOf.has(e.user_id) ? pill(`сатри ${rowOf.get(e.user_id)}`, 'muted')
+          : elsewhere ? pill(elsewhere, 'warn') : pill('озод', 'info');
         return `<button type="button" class="gs-person${here ? ' is-current' : ''}" data-uid="${e.user_id}">
           ${avatar(tgName(e), e.user_id, e.active ? '' : 'is-off')}
-          <span class="gs-row__main"><b>${esc(tgName(e))}</b><small>${esc(idLine(e))}${e.active ? '' : ' · савол намегирад'}</small>${other ? `<small class="gs-person__note">${esc(other)}</small>` : ''}</span>
+          <span class="gs-row__main"><b>${esc(tgName(e))}</b><small>${esc(idLine(e))}${e.active ? '' : ' · савол намегирад'}</small>${note ? `<small class="gs-person__note">${esc(note)}</small>` : ''}</span>
           ${tag}
         </button>`;
       }).join('') || `<div class="card__body">${emptyState(q ? 'Ёфт нашуд' : 'Ҳанӯз касе ботро накушодааст')}</div>`;
-      $$('#gs-people .gs-person').forEach((b) => b.addEventListener('click', async () => {
-        const uid = Number(b.dataset.uid);
+      $$('#gs-people .gs-person').forEach((el) => el.addEventListener('click', async () => {
+        const uid = Number(el.dataset.uid);
         if (uid === row.user_id) { query = ''; drawList(); return; }
         $$('#gs-people .gs-person').forEach((x) => { x.disabled = true; });
-        b.classList.add('is-loading');
+        el.classList.add('is-loading');
         query = '';
         await link(row, uid);
       }));
@@ -2696,6 +2944,7 @@ function bindGlobal() {
 
 async function boot() {
   initTelegram();
+  S.branch = store.get('sc_branch') || '';
   applyTheme(preferredTheme());
   buildNav();
   bindGlobal();

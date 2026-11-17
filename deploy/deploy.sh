@@ -148,6 +148,11 @@ install -m 755 "$CODE/deploy/deploy.sh"                    /usr/local/sbin/hrcon
 if command -v nginx >/dev/null 2>&1; then
     [ -f /etc/nginx/sites-available/hrcontrol ] || install -m 644 "$CODE/deploy/nginx-hrcontrol.conf" /etc/nginx/sites-available/hrcontrol
     [ -e /etc/nginx/sites-enabled/hrcontrol ] || ln -s /etc/nginx/sites-available/hrcontrol /etc/nginx/sites-enabled/hrcontrol
+    # Домени асосӣ: staff.softclub.tj (сайти алоҳида; сертификат — аз watchdog, вақте DNS тайёр шавад)
+    [ -s "$ETC/domain" ] || echo "staff.softclub.tj" > "$ETC/domain"
+    [ -f /etc/nginx/sites-available/hrcontrol-staff ] || install -m 644 "$CODE/deploy/nginx-hrcontrol-staff.conf" /etc/nginx/sites-available/hrcontrol-staff
+    [ -e /etc/nginx/sites-enabled/hrcontrol-staff ] || ln -s /etc/nginx/sites-available/hrcontrol-staff /etc/nginx/sites-enabled/hrcontrol-staff
+    nginx -t >/dev/null 2>&1 || { rm -f /etc/nginx/sites-enabled/hrcontrol-staff; log "огоҳӣ: конфиги staff дар nginx қабул нашуд — хомӯш монд"; }
     systemctl enable nginx >/dev/null 2>&1 || true
     if nginx -t >/dev/null 2>&1; then systemctl reload nginx || systemctl start nginx; else log "огоҳӣ: 'nginx -t' хато медиҳад"; fi
 fi

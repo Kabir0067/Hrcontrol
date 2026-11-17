@@ -195,9 +195,25 @@ def month_days(key: str) -> int:
     return calendar.monthrange(y, m)[1]
 
 
-def month_title(key: str) -> str:
+def month_title(key: str, style: str = "long") -> str:
+    """«November 2026» (long) ё «November 26» (short — мисли ҷадвали корхона)."""
     y, m = (int(x) for x in key.split("-"))
-    return f"{MONTHS_EN[m - 1]} {y}"
+    return f"{MONTHS_EN[m - 1]} {y % 100:02d}" if style == "short" else f"{MONTHS_EN[m - 1]} {y}"
+
+
+def title_style(title: str) -> str:
+    return "short" if re.fullmatch(r"\s*[A-Za-z]+\s+\d{2}\s*", title or "") else "long"
+
+
+_MONTH_STEMS = tuple(m.lower()[:3] for m in MONTHS_EN) + (
+    "январ", "феврал", "март", "апрел", "май", "июн", "июл", "август", "сентябр", "октябр",
+    "ноябр", "декабр", "солона")
+
+
+def looks_like_month(title: str) -> bool:
+    """Номи варақ ба номи моҳ монанд аст? (онро иваз намекунем — номгузории корхона)"""
+    low = (title or "").lower()
+    return any(re.search(r"(^|[^a-zа-яӣӯҳқғҷ])" + re.escape(stem), low) for stem in _MONTH_STEMS)
 
 
 def day_label(key: str, day: int) -> str:
@@ -261,6 +277,11 @@ def result_formula(row1: int, sep: str = ",") -> str:
 
 def _is_our_formula(text: str) -> bool:
     return "ISEVEN(COLUMN(F" in text and "SUMPRODUCT" in text
+
+
+def _is_company_formula(text: str) -> bool:
+    """Формулаи «Натиҷа %»-и корхона (ҳамон ҳисоб, вале бо матни «Наомад» холӣ мешавад)."""
+    return text.startswith("=IFERROR((IF(AND(") and 'TIMEVALUE("00:15")' in text
 
 
 # Забонҳое, ки дар онҳо ададҳо бо вергул навишта мешаванд → аргументҳо бо «;»
@@ -492,7 +513,7 @@ class Client:
     async def meta(self) -> dict:
         return await self.call("GET", "", {"fields": (
             "properties(locale),"
-            "sheets(properties(sheetId,title,index,gridProperties(rowCount,columnCount)),"
+            "sheets(properties(sheetId,title,index,hidden,gridProperties(rowCount,columnCount)),"
             "developerMetadata(metadataId,metadataKey,metadataValue))")})
 
     async def values(self, title: str, rng: str, render: str = "UNFORMATTED_VALUE") -> list:
@@ -523,6 +544,7 @@ class Tab:
     rows: int
     month: str | None = None
     meta_id: int | None = None
+    hidden: bool = False
 
 
 @dataclass
@@ -673,23 +695,35 @@ def _set_no_autolink(ids: set[int]) -> None:
 
 
 class Syncer:
-    def __init__(self, client, spreadsheet_id: str, email: str = ""):
+    """Як ҷадвал (як филиал): варақҳои моҳҳо, навиштани давомот, пайвасти кормандон."""
+
+    def __init__(self, client, spreadsheet_id: str, email: str = "", name: str = ""):
         self.client = client
         self.sid = spreadsheet_id
         self.email = email
+        self.name = name or "Филиал"
         self.lock = asyncio.Lock()
         self.kicked = asyncio.Event()
         self.snapshot: dict | None = None
+        self.title = ""                     # номи худи ҷадвал дар Google
         self._formulas_ok: set = set()
         self.locale = ""
         self._sep = ""                      # ҷудокунандае, ки дар ин ҷадвал санҷида шуд
         self._last_logged = ("", 0.0)
+        self.status: dict = {"ok": None, "error": "", "last_try": None, "last_ok": None, "last_write": None,
+                             "writes": 0, "last_writes": 0, "conflicts": 0, "tab": "", "month": ""}
+
+    def _set(self, **values) -> None:
+        self.status.update(values)
+        STATE.update({k: v for k, v in values.items() if k in STATE})
 
     # ── варақҳои моҳҳо ────────────────────────────────────────────────
 
     async def tabs(self) -> list[Tab]:
         meta = await self.client.meta()
-        self.locale = (meta.get("properties") or {}).get("locale") or self.locale
+        props = meta.get("properties") or {}
+        self.locale = props.get("locale") or self.locale
+        self.title = props.get("title") or self.title
         out = []
         for sh in meta.get("sheets", []):
             p = sh.get("properties", {})
@@ -697,7 +731,8 @@ class Syncer:
             out.append(Tab(int(p.get("sheetId", 0)), p.get("title", ""), int(p.get("index", 0)),
                            int(p.get("gridProperties", {}).get("rowCount", 1000)),
                            tag.get("metadataValue") if tag else None,
-                           tag.get("metadataId") if tag else None))
+                           tag.get("metadataId") if tag else None,
+                           bool(p.get("hidden"))))
         return out
 
     async def ensure_month(self, key: str, create: bool = True) -> Tab | None:
@@ -705,25 +740,27 @@ class Syncer:
         mine = sorted((t for t in tabs if t.month == key), key=lambda t: t.index)
         if mine:
             return mine[0]
-        title = month_title(key)
-        # 1) варақи мавҷуда бо ҳамин ном ё бо сарлавҳаҳои ҳамин моҳ (масалан, «Лист1» барои ноябр)
-        for tab in sorted((t for t in tabs if t.month is None), key=lambda t: (t.title != title, t.index)):
+        titles = {month_title(key), month_title(key, "short")}
+        # 1) варақи мавҷуда (намоён) бо номи ҳамин моҳ ё бо сарлавҳаҳои ҳамин моҳ.
+        #    Варақҳои пинҳон — нусхаҳои кӯҳнаи корхона, ба онҳо даст намерасонем.
+        for tab in sorted((t for t in tabs if t.month is None and not t.hidden),
+                          key=lambda t: (t.title not in titles, t.index)):
             head = await self.client.values(tab.title, f"A1:{col_name(C_RESULT)}3")
-            if layout_ok(head) and (tab.title == title or header_matches(head, key)):
+            if layout_ok(head) and (tab.title in titles or header_matches(head, key)):
                 await self._adopt(tab, key, head, tabs)
                 return tab
         if not create:
             return None
-        # 2) варақи нав — нусхаи моҳи охирин (ҳамон дизайн, кормандон ва вақтҳо)
+        # 2) варақи нав — нусхаи моҳи охирин (ҳамон дизайн, кормандон, ID-ҳо ва вақтҳо)
         older = sorted((t for t in tabs if t.month and t.month < key), key=lambda t: t.month)
         source = older[-1] if older else None
         if source is None:
-            for tab in sorted(tabs, key=lambda t: t.index):
+            for tab in sorted((t for t in tabs if not t.hidden), key=lambda t: t.index):
                 if layout_ok(await self.client.values(tab.title, f"A1:{col_name(C_RESULT)}3")):
                     source = tab
                     break
         if source is None:
-            raise SheetsError("Дар ҷадвал варақе бо сохтори «Номи Корманд / Омад / Рафт» ёфт нашуд")
+            raise SheetsError("Дар ҷадвал варақе бо сохтори «Номи Корманд / Телеграм id / Омад / Рафт» ёфт нашуд")
         return await self._create(source, key, tabs)
 
     def _meta_request(self, tab: Tab, key: str) -> dict:
@@ -736,10 +773,14 @@ class Syncer:
             "location": {"sheetId": tab.sheet_id}, "visibility": "DOCUMENT"}}}
 
     async def _adopt(self, tab: Tab, key: str, head: list, tabs: list[Tab]) -> None:
-        """Варақи мавҷударо ҳамчун варақи ин моҳ қабул мекунад (дизайн ва маълумот — бетағйир)."""
+        """Варақи мавҷударо ҳамчун варақи ин моҳ қабул мекунад (дизайн ва маълумот — бетағйир).
+
+        Номи варақро танҳо агар номи моҳ набошад («Лист1», «Sheet1») иваз мекунем;
+        «November 26»-и корхона ҳамон тавр мемонад.
+        """
         title = month_title(key)
         reqs = [self._meta_request(tab, key)]
-        if tab.title != title and title not in {t.title for t in tabs}:
+        if not looks_like_month(tab.title) and title not in {t.title for t in tabs}:
             reqs.append({"updateSheetProperties": {"properties": {"sheetId": tab.sheet_id, "title": title},
                                                    "fields": "title"}})
         a1 = str(_get(head, ROW_TITLE, C_NAME) or "")
@@ -748,21 +789,21 @@ class Syncer:
         if not header_matches(head, key):
             reqs += header_requests(tab.sheet_id, key)
         await self.client.batch(reqs)
-        log.info("📗 Варақи «%s» ҳамчун %s қабул шуд", tab.title, title)
+        log.info("📗 %s: варақи «%s» ҳамчун %s қабул шуд", self.name, tab.title, title)
         if any("updateSheetProperties" in r for r in reqs):
             tab.title = title
         tab.month = key
 
     async def _create(self, source: Tab, key: str, tabs: list[Tab]) -> Tab:
-        title = month_title(key)
+        title = month_title(key, title_style(source.title))
         if title in {t.title for t in tabs}:
             title = f"{title} (HR)"
         replies = await self.client.batch([{"duplicateSheet": {
-            "sourceSheetId": source.sheet_id, "insertSheetIndex": 0, "newSheetName": title}}])
+            "sourceSheetId": source.sheet_id, "insertSheetIndex": source.index + 1, "newSheetName": title}}])
         props = replies[0]["duplicateSheet"]["properties"]
         new_id = int(props["sheetId"])
         fresh = next((t for t in await self.tabs() if t.sheet_id == new_id), None)
-        tab = fresh or Tab(new_id, props.get("title", title), 0,
+        tab = fresh or Tab(new_id, props.get("title", title), source.index + 1,
                            int(props.get("gridProperties", {}).get("rowCount", 1000)))
         values = await self.client.values(tab.title, f"A1:{col_name(C_RESULT)}{min(tab.rows, MAX_ROWS)}")
         rows = parse_rows(values)
@@ -779,12 +820,13 @@ class Syncer:
                                          "fields": CELL_FIELDS, "rows": [{"values": cells}]}})
         await self.client.batch(reqs)
         tab.month = key
-        log.info("📗 Варақи нав сохта шуд: «%s» (аз «%s», %d корманд)", tab.title, source.title, len(rows))
+        log.info("📗 %s: варақи нав «%s» сохта шуд (аз «%s», %d корманд)",
+                 self.name, tab.title, source.title, len(rows))
         await self.ensure_formulas(tab, rows, force=True)
         return tab
 
     async def _stripes(self, tab: Tab, rows: list[Row]) -> dict[int, str]:
-        """Ранги заминаи ҳар сатр (аз сутуни A) — барои ячейкаҳои холӣ."""
+        """Ранги заминаи ҳар сатр (аз сутуни A) — барои катакҳои холӣ."""
         if not rows:
             return {}
         last = max(r.r for r in rows) + 1
@@ -801,7 +843,8 @@ class Syncer:
         return out
 
     async def ensure_formulas(self, tab: Tab, rows: list[Row], force: bool = False) -> None:
-        """«Натиҷа %»: формулаи вайрон (R1C1 → #ERROR!) ё холӣ → формулаи корӣ. Дигарашро — не."""
+        """«Натиҷа %»: формулаи вайрон, холӣ ё формулаи корхона (ки бо «Наомад» холӣ мешавад)
+        → ҳамон ҳисоб, вале ба матн тобовар. Формулаҳои дигарро намерасонем."""
         named = [r for r in rows if r.name]
         stamp = (tab.sheet_id, tuple(r.r for r in named))
         if not named or (not force and stamp in self._formulas_ok):
@@ -822,7 +865,7 @@ class Syncer:
             have = str(_get(current, row.r, 0) or "")
             if have in variants:
                 continue
-            if not have or "R[0]C" in have or _is_our_formula(have):
+            if not have or "R[0]C" in have or _is_our_formula(have) or _is_company_formula(have):
                 todo.append(row)
         if todo:
             # Навиштан → санҷидан: агар Google формуларо нафаҳмид (#ERROR!) — ҷудокунандаи дигар
@@ -836,33 +879,43 @@ class Syncer:
             else:
                 self._sep = first
                 log.warning("📗 «Натиҷа %%»: Google формуларо қабул накард (%s)", tab.title)
-            log.info("📗 «Натиҷа %%»: формула дар %d сатр ислоҳ шуд (%s, «%s»)", len(todo), tab.title, self._sep)
+            log.info("📗 %s: «Натиҷа %%» дар %d сатр (%s, «%s»)", self.name, len(todo), tab.title, self._sep)
         self._formulas_ok.add(stamp)
 
-    # ── синхронизатсия ─────────────────────────────────────────────────
+    # ── ҳамоҳангсозӣ ───────────────────────────────────────────────────
 
-    async def sync(self) -> dict:
+    async def sync(self, apply_plans: bool = True) -> dict:
         async with self.lock:
-            return await self._sync()
+            result = await self._sync()
+        if apply_plans:
+            db.sync_sheet_plans(result["plans"])
+        return result
 
     async def _sync(self) -> dict:
-        STATE["last_try"] = cfg.now_str()
+        self._set(last_try=cfg.now_str())
         today = cfg.now().date()
         key = month_key(today)
-        tab = await self.ensure_month(key, create=True)
-        result = await self._sync_tab(tab, key, today, primary=True)
-        if today.day <= 5:                      # охири моҳи гузашта (масалан, ислоҳи дертар)
-            prev = await self.ensure_month(shift_month(key, -1), create=False)
-            if prev is not None and prev.sheet_id != tab.sheet_id:
-                await self._sync_tab(prev, prev.month, today, primary=False)
-        STATE.update(ok=True, error="", last_ok=cfg.now_str(), tab=tab.title, month=key)
+        try:
+            tab = await self.ensure_month(key, create=True)
+            result = await self._sync_tab(tab, key, today, primary=True)
+            if today.day <= 5:                  # охири моҳи гузашта (масалан, ислоҳи дертар)
+                prev = await self.ensure_month(shift_month(key, -1), create=False)
+                if prev is not None and prev.sheet_id != tab.sheet_id:
+                    await self._sync_tab(prev, prev.month, today, primary=False)
+        except Exception as exc:
+            self._set(ok=False, error=(str(exc) if isinstance(exc, SheetsError)
+                                       else f"{type(exc).__name__}: {exc}")[:400])
+            raise
+        self._set(ok=True, error="", last_ok=cfg.now_str(), tab=tab.title, month=key)
         return result
 
     def _autolink(self, rows: list[Row], emps: list[dict], links: dict[int, Row]) -> list[tuple[Row, int]]:
         """Пайвасти худкор — танҳо агар ном қариб айнан мувофиқ ва ягона бошад (ҳар ду тараф)."""
         blocked = _no_autolink()
         free = [r for r in rows if r.tg is None and r.name]
-        people = [e for e in emps if e["active"] and e["user_id"] not in links and e["user_id"] not in blocked]
+        # танҳо касоне, ки ҳанӯз дар ҳеҷ филиал нестанд (як корманд — як филиал)
+        people = [e for e in emps if e["active"] and e["user_id"] not in links and e["user_id"] not in blocked
+                  and not e.get("branch")]
         if not free or not people:
             return []
         score = {(e["user_id"], r.r): name_score(e["name"], r.name) for e in people for r in free}
@@ -885,10 +938,18 @@ class Syncer:
                 unique.append((row, uid))
         return unique
 
+    def _since(self, today: date) -> str:
+        key = f"gsheet_since:{self.sid}"
+        since = db.get_setting(key)
+        if not since:
+            since = today.isoformat()
+            db.set_settings({key: since})
+        return since
+
     async def _sync_tab(self, tab: Tab, key: str, today: date, primary: bool) -> dict:
         values = await self.client.values(tab.title, f"A1:{col_name(C_RESULT)}{min(tab.rows, MAX_ROWS)}")
         if not layout_ok(values):
-            raise SheetsError(f"Сохтори варақи «{tab.title}» иваз шудааст (сатрҳои 2–3) — бот ба он намерасад")
+            raise SheetsError(f"Сохтори варақи «{tab.title}» иваз шудааст (сатрҳои 2–3) — бот ба он даст намезанад")
         rows = parse_rows(values)
         emps = db.employees_brief()
         by_id = {e["user_id"]: e for e in emps}
@@ -914,15 +975,11 @@ class Syncer:
                     links[uid] = row
                     log.info("📗 Пайвасти худкор: «%s» ↔ %s", row.name, by_id[uid]["name"])
 
+        plans = {uid: (row.plan_in, row.plan_out, row.name, self.sid) for uid, row in links.items() if uid in by_id}
         if primary:
-            db.sync_sheet_plans({uid: (row.plan_in, row.plan_out, row.name)
-                                 for uid, row in links.items() if uid in by_id})
             await self.ensure_formulas(tab, rows)
 
-        since_txt = db.get_setting("gsheet_since")
-        if not since_txt:
-            since_txt = today.isoformat()
-            db.set_settings({"gsheet_since": since_txt})
+        since_txt = self._since(today)
         since = datetime.strptime(since_txt, cfg.DATE_FMT).date()
         y, m = (int(x) for x in key.split("-"))
         start = max(date(y, m, 1), since)
@@ -972,15 +1029,15 @@ class Syncer:
                                               _blank_bg(key, day, kind, stripes.get(row.r, "ffffff"))))
             if writes:
                 await self.client.batch(writes)
+                self.status["writes"] += len(writes)
                 STATE["writes"] += len(writes)
-                STATE["last_write"] = cfg.now_str()
-                log.info("📗 Google Sheet «%s»: %d ячейка навишта шуд", tab.title, len(writes))
+                self._set(last_write=cfg.now_str())
+                log.info("📗 %s «%s»: %d катак навишта шуд", self.name, tab.title, len(writes))
             if put or drop:
                 db.sheet_own_apply(tab_key, put, drop)
 
         if primary:
-            STATE["last_writes"] = len(writes)
-            STATE["conflicts"] = conflicts
+            self._set(last_writes=len(writes), conflicts=conflicts)
             self.snapshot = {
                 "tab": tab.title, "month": key, "sheet_id": tab.sheet_id, "since": since_txt,
                 "rows": [{"row": r.r + 1, "name": r.name, "tg": r.tg, "plan_in": r.plan_in,
@@ -989,11 +1046,11 @@ class Syncer:
                          for r in rows],
                 "at": cfg.now_str(),
             }
-        return {"tab": tab.title, "writes": len(writes), "conflicts": conflicts}
+        return {"tab": tab.title, "writes": len(writes), "conflicts": conflicts, "plans": plans}
 
     # ── амалҳои панел ──────────────────────────────────────────────────
 
-    async def link(self, row1: int, name: str, user_id: int | None) -> None:
+    async def link(self, row1: int, name: str, user_id: int | None, resync: bool = True) -> None:
         async with self.lock:
             key = month_key(cfg.now().date())
             tab = await self.ensure_month(key, create=True)
@@ -1016,10 +1073,50 @@ class Syncer:
                     blocked.add(old)               # худкор боз пайваст накунад
             await self.client.batch(reqs)
             _set_no_autolink(blocked)
-            log.info("📗 Пайваст: сатри %d («%s») → %s", row1, name, user_id or "—")
-            await self._sync()
+            log.info("📗 %s: сатри %d («%s») → %s", self.name, row1, name, user_id or "—")
+            if resync:
+                result = await self._sync()
+        if resync:
+            db.sync_sheet_plans(result["plans"])
 
-    # ── ҳалқаи фонӣ ────────────────────────────────────────────────────
+    async def unlink_user(self, user_id: int) -> bool:
+        """ID-и корманд аз ин ҷадвал (варақи ҷорӣ) тоза мешавад — ҳангоми гузариш ба филиали дигар."""
+        async with self.lock:
+            tab = await self.ensure_month(month_key(cfg.now().date()), create=True)
+            values = await self.client.values(tab.title, f"A1:B{min(tab.rows, MAX_ROWS)}")
+            reqs = [_text_cell(tab.sheet_id, i, C_TG, None) for i in range(FIRST_ROW, len(values))
+                    if parse_tg(_get(values, i, C_TG)) == user_id]
+            if reqs:
+                await self.client.batch(reqs)
+            return bool(reqs)
+
+    async def set_plan(self, user_id: int, plan_in: str | None, plan_out: str | None) -> bool:
+        """Вақти кор аз панел → «Омадан / Рафтан (брнм)» дар варақи ҷорӣ ва моҳҳои баъдӣ.
+
+        Моҳи нав аз варақи охирин нусха мешавад, бинобар ин вақт барои ҳамеша мемонад.
+        """
+        async with self.lock:
+            key = month_key(cfg.now().date())
+            await self.ensure_month(key, create=True)
+            tabs = [t for t in await self.tabs() if t.month and t.month >= key]
+            found = False
+            for tab in sorted(tabs, key=lambda t: t.month):
+                values = await self.client.values(tab.title, f"A1:B{min(tab.rows, MAX_ROWS)}")
+                reqs = []
+                for i in range(FIRST_ROW, len(values)):
+                    if parse_tg(_get(values, i, C_TG)) == user_id:
+                        if plan_in is not None:
+                            reqs.append(_text_cell(tab.sheet_id, i, C_IN, plan_in))
+                        if plan_out is not None:
+                            reqs.append(_text_cell(tab.sheet_id, i, C_OUT, plan_out))
+                if reqs:
+                    await self.client.batch(reqs)
+                    found = True
+            if found:
+                log.info("📗 %s: вақти корманди %s дар ҷадвал → %s–%s", self.name, user_id, plan_in, plan_out)
+            return found
+
+    # ── ҳалқаи фонӣ (як ҷадвал; Manager ҳамин корро барои ҳама мекунад) ──
 
     def _log_error(self, text: str) -> None:
         prev, at = self._last_logged
@@ -1028,56 +1125,174 @@ class Syncer:
             self._last_logged = (text, time.time())
 
     async def loop(self) -> None:
-        STATE["running"] = True
-        last_full, last_fp, backoff, next_try = 0.0, None, 0.0, 0.0
-        try:
-            while True:
-                enabled = _setting_on("gsheet_enabled")
-                STATE["enabled"] = enabled
-                if enabled:
-                    now = time.monotonic()
-                    floor = shift_month(month_key(cfg.now().date()), -1) + "-01"
-                    try:
-                        fp = db.attendance_fingerprint(floor)
-                        due = self.kicked.is_set() or fp != last_fp or now - last_full >= cfg.GSHEET_INTERVAL
-                        if due and now >= next_try:
-                            self.kicked.clear()
-                            await self.sync()
-                            last_fp, last_full, backoff = fp, time.monotonic(), 0.0
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        text = str(exc) if isinstance(exc, SheetsError) else f"{type(exc).__name__}: {exc}"
-                        STATE.update(ok=False, error=text[:400])
-                        backoff = min(300.0, backoff * 2 or 15.0)
-                        next_try = time.monotonic() + backoff
-                        self._log_error(text)
-                        if not isinstance(exc, SheetsError):
-                            log.debug("Google Sheet", exc_info=True)
+        await _run_loop(self, self.sync)
+
+
+async def _run_loop(owner, sync) -> None:
+    """Ҳар 5 сония: давомот иваз шуд ё GSHEET_INTERVAL гузашт → ҳамоҳангсозӣ (хато → backoff)."""
+    STATE["running"] = True
+    last_full, last_fp, backoff, next_try = 0.0, None, 0.0, 0.0
+    try:
+        while True:
+            enabled = _setting_on("gsheet_enabled")
+            STATE["enabled"] = enabled
+            if enabled:
+                now = time.monotonic()
+                floor = shift_month(month_key(cfg.now().date()), -1) + "-01"
                 try:
-                    await asyncio.wait_for(self.kicked.wait(), timeout=5)
-                except asyncio.TimeoutError:
+                    fp = db.attendance_fingerprint(floor)
+                    due = owner.kicked.is_set() or fp != last_fp or now - last_full >= cfg.GSHEET_INTERVAL
+                    if due and now >= next_try:
+                        owner.kicked.clear()
+                        await sync()
+                        last_fp, last_full, backoff = fp, time.monotonic(), 0.0
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    text = str(exc) if isinstance(exc, SheetsError) else f"{type(exc).__name__}: {exc}"
+                    STATE.update(ok=False, error=text[:400])
+                    backoff = min(300.0, backoff * 2 or 15.0)
+                    next_try = time.monotonic() + backoff
+                    owner._log_error(text)
+                    if not isinstance(exc, SheetsError):
+                        log.debug("Google Sheet", exc_info=True)
+            try:
+                await asyncio.wait_for(owner.kicked.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        STATE["running"] = False
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Филиалҳо (ҳар филиал — ҷадвали худ, сохтор якхела)
+# ══════════════════════════════════════════════════════════════════════════
+
+def sheet_url(sid: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+
+
+def parse_sheet_id(text: str) -> str | None:
+    text = (text or "").strip()
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})", text)
+    if m:
+        return m.group(1)
+    return text if re.fullmatch(r"[A-Za-z0-9_-]{20,}", text) else None
+
+
+def get_books() -> list[dict]:
+    """[{id, name}] — аз панел; набошад — GSHEET_ID-и пешфарз."""
+    raw = db.get_setting("gsheet_books")
+    if raw is None:
+        return [{"id": cfg.GSHEET_ID, "name": cfg.GSHEET_NAME}] if cfg.GSHEET_ID else []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for item in data if isinstance(data, list) else []:
+        if isinstance(item, dict) and parse_sheet_id(str(item.get("id", ""))):
+            out.append({"id": str(item["id"]), "name": str(item.get("name") or "Филиал")[:60]})
+        elif isinstance(item, str) and parse_sheet_id(item):
+            out.append({"id": item, "name": "Филиал"})
+    return out
+
+
+def save_books(books: list[dict]) -> None:
+    db.set_settings({"gsheet_books": json.dumps(
+        [{"id": b["id"], "name": b["name"]} for b in books], ensure_ascii=False)})
+
+
+class Manager:
+    """Ҳамаи ҷадвалҳо (филиалҳо) бо як калиди Google ва як ҳалқа."""
+
+    def __init__(self, creds: Credentials, client_factory=None):
+        self.creds = creds
+        self.email = creds.email if creds else ""
+        self._factory = client_factory or (lambda sid: Client(creds, sid))
+        self.syncers: dict[str, Syncer] = {}
+        self.lock = asyncio.Lock()
+        self.kicked = asyncio.Event()
+        self._last_logged = ("", 0.0)
+
+    def syncer(self, book: dict) -> Syncer:
+        s = self.syncers.get(book["id"])
+        if s is None:
+            s = Syncer(self._factory(book["id"]), book["id"], self.email, book.get("name", ""))
+            self.syncers[book["id"]] = s
+        s.name = book.get("name") or s.name
+        return s
+
+    def _log_error(self, text: str) -> None:
+        prev, at = self._last_logged
+        if text != prev or time.time() - at > 600:
+            log.warning("📗 Google Sheet: %s", text)
+            self._last_logged = (text, time.time())
+
+    async def sync_all(self) -> dict:
+        async with self.lock:
+            books = get_books()
+            plans: dict[int, tuple] = {}
+            failed, errors = set(), []
+            total = {"writes": 0, "conflicts": 0, "books": len(books)}
+            STATE["last_try"] = cfg.now_str()
+            for book in books:
+                s = self.syncer(book)
+                try:
+                    async with s.lock:
+                        result = await s._sync()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failed.add(book["id"])
+                    errors.append(f"{s.name}: {s.status.get('error') or exc}")
+                    continue
+                for uid, plan in result["plans"].items():
+                    plans.setdefault(uid, plan)        # як корманд дар ду филиал → аввалин
+                total["writes"] += result["writes"]
+                total["conflicts"] += result["conflicts"]
+            db.sync_sheet_plans(plans, keep_branches=failed)
+            ids = {b["id"] for b in books}
+            for sid in [k for k in self.syncers if k not in ids]:
+                gone = self.syncers.pop(sid)
+                try:
+                    await gone.client.close()
+                except Exception:
                     pass
-        finally:
-            STATE["running"] = False
+            if errors:
+                STATE.update(ok=False, error="; ".join(errors)[:400])
+                raise SheetsError(STATE["error"])
+            STATE.update(ok=True, error="", last_ok=cfg.now_str(), last_writes=total["writes"],
+                         conflicts=total["conflicts"])
+            return total
+
+    async def loop(self) -> None:
+        await _run_loop(self, self.sync_all)
+
+    async def close(self) -> None:
+        for s in self.syncers.values():
+            try:
+                await s.client.close()
+            except Exception:
+                pass
 
 
-_SYNCER: Syncer | None = None
+_MANAGER: Manager | None = None
+_SYNCER: Syncer | None = None           # танҳо барои санҷишҳо (як ҷадвал)
 
 
 def kick() -> None:
-    """Тағйирот шуд — ҳарчи зудтар синхрон кунем (аз панел/бот)."""
-    if _SYNCER is not None:
+    """Тағйирот шуд — ҳарчи зудтар ҳамоҳанг кунем (аз панел/бот)."""
+    if _MANAGER is not None:
+        _MANAGER.kicked.set()
+    elif _SYNCER is not None:
         _SYNCER.kicked.set()
 
 
-def build() -> Syncer | None:
+def build() -> Manager | None:
     STATE["configured"] = False
-    if not cfg.GSHEET_ID:
-        STATE["error"] = "GSHEET_ID гузошта нашудааст"
-        return None
     if not os.path.isfile(cfg.GSHEET_KEY_FILE):
-        STATE["error"] = "Калиди Google (service account) ёфт нашуд"
+        STATE["error"] = "Калиди Google (service account) дар сервер нест"
         return None
     try:
         creds = Credentials.from_file(cfg.GSHEET_KEY_FILE)
@@ -1085,89 +1300,141 @@ def build() -> Syncer | None:
         STATE["error"] = f"Калиди Google хонда нашуд: {exc}"
         return None
     STATE.update(configured=True, email=creds.email, error="")
-    return Syncer(Client(creds, cfg.GSHEET_ID), cfg.GSHEET_ID, creds.email)
+    return Manager(creds)
 
 
 async def run_forever() -> None:
     """Зерсистемаи «sheets» (main.py). Агар калид набошад — ҳар 5 дақиқа аз нав месанҷад."""
-    global _SYNCER
+    global _MANAGER
     while True:
-        syncer = build()
-        if syncer is None:
+        manager = build()
+        if manager is None:
             await asyncio.sleep(300)
             continue
-        _SYNCER = syncer
-        log.info("📗 Google Sheet: %s (%s)", cfg.GSHEET_URL, syncer.email)
+        _MANAGER = manager
+        log.info("📗 Google Sheet: %d филиал (%s)", len(get_books()), manager.email)
         try:
-            await syncer.loop()
+            await manager.loop()
         finally:
-            _SYNCER = None
-            await syncer.client.close()
+            _MANAGER = None
+            await manager.close()
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Барои панел
 # ══════════════════════════════════════════════════════════════════════════
 
+def _pairs() -> list[tuple[dict, Syncer | None]]:
+    if _MANAGER is not None:
+        return [(b, _MANAGER.syncer(b)) for b in get_books()]
+    if _SYNCER is not None:
+        return [({"id": _SYNCER.sid, "name": _SYNCER.name}, _SYNCER)]
+    return [(b, None) for b in get_books()]
+
+
+def _syncer_for(book_id: str | None) -> Syncer:
+    for book, s in _pairs():
+        if s is not None and (book_id is None or book["id"] == book_id):
+            return s
+    raise SheetsError(STATE.get("error") or "Ҷадвали Google пайваст нест")
+
+
 def panel_state() -> dict:
-    snap = _SYNCER.snapshot if _SYNCER else None
     emps = db.employees_brief()
     by_id = {e["user_id"]: e for e in emps}
-    rows, linked = [], set()
-    for r in (snap or {}).get("rows", []):
-        item = dict(r)
-        emp = by_id.get(r["user_id"]) if r["user_id"] else None
-        item["employee"] = emp["name"] if emp else None
-        item["unknown"] = bool(r["tg"]) and not emp and not r["dup"]
-        if emp:
-            linked.add(emp["user_id"])
-        rows.append(item)
-    free_rows = [r for r in rows if not r["user_id"] and r["name"]]
-    unlinked = []
-    for e in emps:
-        if not e["active"] or e["user_id"] in linked:
-            continue
-        ranked = sorted(((name_score(e["name"], r["name"]), r) for r in free_rows), key=lambda x: -x[0])
-        unlinked.append({"user_id": e["user_id"], "name": e["name"], "tg_name": e["tg_name"],
-                         "username": e["username"],
-                         "suggest": [{"row": r["row"], "name": r["name"], "score": s}
-                                     for s, r in ranked[:3] if s >= 0.75]})
-    for item in rows:
-        if item["user_id"] or not item["name"]:
-            continue
-        ranked = sorted(((name_score(u["name"], item["name"]), u) for u in unlinked), key=lambda x: -x[0])
-        item["suggest"] = [{"user_id": u["user_id"], "name": u["name"], "score": s}
-                           for s, u in ranked[:3] if s >= 0.75]
+    linked: set[int] = set()
+    books = []
+    for book, s in _pairs():
+        snap = s.snapshot if s else None
+        rows = []
+        for r in (snap or {}).get("rows", []):
+            item = dict(r)
+            emp = by_id.get(r["user_id"]) if r["user_id"] else None
+            item["employee"] = emp["name"] if emp else None
+            item["unknown"] = bool(r["tg"]) and not emp and not r["dup"]
+            if emp:
+                linked.add(emp["user_id"])
+            rows.append(item)
+        status = dict(s.status) if s else {"ok": None, "error": STATE.get("error") or ""}
+        named = [r for r in rows if r["name"]]
+        books.append({
+            "id": book["id"], "name": book["name"], "title": s.title if s else "",
+            "url": sheet_url(book["id"]), "status": status,
+            "tab": (snap or {}).get("tab"), "month": (snap or {}).get("month"),
+            "since": (snap or {}).get("since") or db.get_setting(f"gsheet_since:{book['id']}"),
+            "rows": rows, "total": len(named), "linked": sum(1 for r in named if r["user_id"]),
+        })
+    unlinked = [{"user_id": e["user_id"], "name": e["name"], "tg_name": e["tg_name"], "username": e["username"]}
+                for e in emps if e["active"] and e["user_id"] not in linked]
     return {
         "configured": STATE["configured"],
         "enabled": _setting_on("gsheet_enabled"),
         "times": _setting_on("gsheet_times"),
+        "only": _setting_on("gsheet_only"),
         "autolink": _setting_on("gsheet_autolink", "0"),
-        "url": cfg.GSHEET_URL,
         "email": STATE["email"],
         "status": {k: STATE[k] for k in ("ok", "error", "running", "last_try", "last_ok", "last_write",
-                                         "writes", "last_writes", "conflicts", "tab", "month")},
-        "since": (snap or {}).get("since") or db.get_setting("gsheet_since"),
-        "tab": (snap or {}).get("tab"),
-        "rows": rows,
+                                         "writes", "last_writes", "conflicts")},
+        "books": books,
         "unlinked": unlinked,
         "employees": [{"user_id": e["user_id"], "name": e["name"], "tg_name": e["tg_name"],
-                       "username": e["username"], "active": bool(e["active"])} for e in emps],
+                       "username": e["username"], "active": bool(e["active"]), "branch": e.get("branch")}
+                      for e in emps],
     }
 
 
 async def sync_now() -> dict:
-    if _SYNCER is None:
-        raise SheetsError(STATE.get("error") or "Google Sheet пайваст нест")
+    if _MANAGER is not None:
+        return await asyncio.wait_for(_MANAGER.sync_all(), timeout=150)
+    if _SYNCER is not None:
+        return await asyncio.wait_for(_SYNCER.sync(), timeout=90)
+    raise SheetsError(STATE.get("error") or "Ҷадвали Google пайваст нест")
+
+
+async def link(row: int, name: str, user_id: int | None, book_id: str | None = None) -> None:
+    s = _syncer_for(book_id)
+    if _MANAGER is None:
+        await asyncio.wait_for(s.link(row, name, user_id), timeout=90)
+        return
+    if user_id:                                 # як корманд — як филиал: аз филиали дигар тоза мекунем
+        for book, other in _pairs():
+            if other is not None and other is not s:
+                try:
+                    await other.unlink_user(int(user_id))
+                except SheetsError:
+                    pass
+    await asyncio.wait_for(s.link(row, name, user_id, resync=False), timeout=90)
+    await sync_now()
+
+
+async def set_plan(user_id: int, plan_in: str | None, plan_out: str | None) -> bool:
+    """Вақти кории корманд аз панел → ҷадвали филиали ӯ. False — корманд дар ҷадвал нест."""
+    emp = db.get_employee(user_id)
+    if not emp or not emp.get("branch"):
+        return False
+    s = _syncer_for(emp["branch"])
+    ok = await asyncio.wait_for(s.set_plan(int(user_id), plan_in, plan_out), timeout=90)
+    if ok:
+        try:
+            await sync_now()
+        except SheetsError:
+            pass
+    return ok
+
+
+async def check_book(text: str) -> dict:
+    """Ҷадвали нави филиалро месанҷад: дастрасӣ ва сохтор. Бармегардонад {id, title, tab}."""
+    sid = parse_sheet_id(text)
+    if not sid:
+        raise SheetsError("Суроғаи ҷадвал нодуруст аст — суроғаи пурраи docs.google.com/spreadsheets/d/… -ро гузоред")
+    if _MANAGER is None:
+        raise SheetsError(STATE.get("error") or "Калиди Google дар сервер нест")
+    s = Syncer(_MANAGER._factory(sid), sid, _MANAGER.email)
     try:
-        result = await asyncio.wait_for(_SYNCER.sync(), timeout=90)
-    except SheetsError as exc:
-        STATE.update(ok=False, error=str(exc))
-        raise
-    return result
-
-
-async def link(row: int, name: str, user_id: int | None) -> None:
-    if _SYNCER is None:
-        raise SheetsError(STATE.get("error") or "Google Sheet пайваст нест")
-    await asyncio.wait_for(_SYNCER.link(row, name, user_id), timeout=90)
+        tabs = await s.tabs()
+        for tab in sorted((t for t in tabs if not t.hidden), key=lambda t: -t.index):
+            if layout_ok(await s.client.values(tab.title, f"A1:{col_name(C_RESULT)}3")):
+                return {"id": sid, "title": s.title, "tab": tab.title}
+        raise SheetsError("Дар ин ҷадвал варақе бо сохтори «Номи Корманд / Телеграм id / Омад / Рафт» нест")
+    finally:
+        await s.client.close()

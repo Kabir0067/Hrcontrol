@@ -21,6 +21,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 TMP = tempfile.mkdtemp()
 os.environ.update({
+    "GSHEET_KEY_FILE": os.path.join(TMP, "no-google-key.json"),
     "BOT_TOKEN": "123456:TEST", "DB_PATH": os.path.join(TMP, "t.db"),
     "LOG_PATH": os.path.join(TMP, "t.log"), "ADMIN_LOGIN": "softclub",
     "ADMIN_PASS": "8520", "SECRET_KEY": "test-secret", "HTTP_HOST": "127.0.0.1",

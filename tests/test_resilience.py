@@ -8,6 +8,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 tmp = tempfile.mkdtemp()
 os.environ.update({
+    "GSHEET_KEY_FILE": os.path.join(tmp, "no-google-key.json"),
     "BOT_TOKEN": "123456:TEST_TOKEN_NOT_REAL",
     "DB_PATH": os.path.join(tmp, "t.db"),
     "LOG_PATH": os.path.join(tmp, "t.log"),

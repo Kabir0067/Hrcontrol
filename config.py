@@ -19,8 +19,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 APP_NAME = "SoftClub HR Control"
-VERSION = "4.3.0"
-BUILD = "2026111601"          # барои cache-busting дар панел
+VERSION = "4.4.0"
+BUILD = "2026111701"          # барои cache-busting дар панел
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -138,8 +138,10 @@ BACKUP_CHAT_ID = _i("BACKUP_CHAT_ID", 0)
 #  Google Sheet — ҷадвали давомоти корхона («Oficce Out»)
 # ──────────────────────────────────────────────────────────────────────────
 
-# ID-и ҷадвал (аз суроғаи docs.google.com/spreadsheets/d/<ID>/edit). "" — хомӯш.
-GSHEET_ID = _s("GSHEET_ID", "1NN6XhDDYeMVCOGZRMppZq3KbE9TmImiQu7vRCbJ24D8")
+# ID-и ҷадвали филиали аввал (аз суроғаи docs.google.com/spreadsheets/d/<ID>/edit). "" — хомӯш.
+GSHEET_ID = _s("GSHEET_ID", "1KH-HbN9XfbxkFRWC8ozwOjM3JJhvYEtp8bzlHNwjBCo")   # «Employee Attendance - Профсоюз»
+# Номи филиали пешфарз. Филиалҳои дигар аз панел илова мешаванд (Танзимот → Ҷадвалҳои Google).
+GSHEET_NAME = _s("GSHEET_NAME", "Профсоюз")
 
 
 def _default_key_file() -> str:

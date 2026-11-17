@@ -138,7 +138,8 @@ WEEKDAYS = ["душанбе", "сешанбе", "чоршанбе", "панҷш�
 MONTHS_GEN = ["январ", "феврал", "март", "апрел", "май", "июн", "июл", "август",
               "сентябр", "октябр", "ноябр", "декабр"]
 
-LEFT_BUTTON = "🚪 Аз кор рафтам"
+ARRIVE_BUTTON = "✅ Ман омадам"
+LEFT_BUTTON = "🚪 Ман рафтам"
 
 STATUS_WORD = {
     "pending": "⏳ Интизори ҷавоб",
@@ -233,7 +234,8 @@ def _main_reply_kb(admin: bool = False) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="Интихоб кунед…")
     if admin:
         kb.row(KeyboardButton("🛡 Панели идора", web_app=WebAppInfo(url=cfg.WEBAPP_URL)))
-    kb.row(KeyboardButton("📝 Дархости нав"), KeyboardButton(LEFT_BUTTON))
+    kb.row(KeyboardButton(ARRIVE_BUTTON), KeyboardButton(LEFT_BUTTON))
+    kb.row(KeyboardButton("📝 Дархости нав"))
     kb.row(KeyboardButton("📋 Дархостҳои ман"), KeyboardButton("ℹ️ Кӯмак"))
     return kb
 
@@ -459,7 +461,7 @@ def _help_text(admin: bool = False) -> str:
         "Ҳар рӯзи корӣ, вақте кор сар мешавад, бот мепурсад: «Ба кор омадед?»\n"
         "• <b>✅ Омадам</b> — вақти омадан қайд мешавад\n"
         "• <b>❌ Наомадам</b> — мегӯед чаро ва кай меоед\n"
-        f"• <b>{LEFT_BUTTON}</b> — вақте аз кор меравед, пахш кунед\n"
+        f"• <b>{ARRIVE_BUTTON}</b> / <b>{LEFT_BUTTON}</b> — ҳар вақт пахш кунед; ҳар кадом як бор дар рӯз\n"
         "Рӯзҳои истироҳат савол намеояд.\n\n"
         "<b>2. Дархост ба роҳбарият</b>\n"
         "«📝 Дархости нав»-ро пахш кунед ва интихоб кунед:\n"
@@ -1468,6 +1470,32 @@ def register_handlers(bot: AsyncTeleBot) -> None:
         if text.startswith("ℹ️"):
             await _safe(bot.send_message(message.chat.id, _help_text(await is_group_admin(uid))))
             return
+        if text.startswith("✅"):
+            db.clear_state(uid)
+            db.touch_employee(uid, _display_name(message.from_user), message.from_user.username)
+            result, rec = db.attendance_self_arrive(uid)
+            if result in ("ok", "late_ok") and rec:
+                clock = _clock(rec["arrived_at"])
+                late = _late_note(rec)
+                text_ok = (f"✅ <b>Қайд шуд.</b> Соати <b>{clock}</b> ба кор омадед{late}.\n\nКори хуб! ☀️\n"
+                           f"<i>Вақте аз кор меравед, «{LEFT_BUTTON}»-ро пахш кунед.</i>")
+                if rec.get("msg_id"):            # саволи субҳ ҳам буд — тугмаҳояш дигар лозим нест
+                    await _safe(bot.edit_message_reply_markup(chat_id=uid, message_id=rec["msg_id"],
+                                                              reply_markup=None))
+                await _safe(bot.send_message(message.chat.id, text_ok, reply_markup=_kb_att_left(rec["id"])))
+                if result == "late_ok":
+                    await _safe(bot.send_message(
+                        GROUP_ID, f"🟢 <b>{_esc(_short_name(rec['name']))}</b> ба кор омад — <b>{clock}</b>{late}"))
+            elif result == "already" and rec:
+                await _safe(bot.send_message(
+                    message.chat.id,
+                    f"ℹ️ Омадани шумо имрӯз соати <b>{_clock(rec.get('arrived_at'))}</b> қайд шуда буд.\n"
+                    "Дар як рӯз як бор қайд мешавад."))
+            elif result == "leave":
+                await _safe(bot.send_message(message.chat.id, "🌴 Шумо имрӯз дар рухсатӣ ҳастед."))
+            else:
+                await _safe(bot.send_message(message.chat.id, "⚠️ Хато шуд. /start-ро пахш кунед ва аз нав кӯшиш кунед."))
+            return
         if text.startswith("🚪"):
             db.clear_state(uid)
             result, rec = db.attendance_mark_left(uid)
@@ -1476,12 +1504,13 @@ def register_handlers(bot: AsyncTeleBot) -> None:
             elif result == "already":
                 await _safe(bot.send_message(
                     message.chat.id,
-                    f"ℹ️ Рафтани шумо имрӯз соати <b>{_clock(rec.get('left_at'))}</b> қайд шуда буд."))
+                    f"ℹ️ Рафтани шумо имрӯз соати <b>{_clock(rec.get('left_at'))}</b> қайд шуда буд.\n"
+                    "Дар як рӯз як бор қайд мешавад."))
             else:
                 await _safe(bot.send_message(
                     message.chat.id,
                     "ℹ️ Имрӯз омадани шумо ба кор қайд нашудааст.\n"
-                    "Аввал ба саволи «Ба кор омадед?» ҷавоб диҳед."))
+                    f"Аввал «{ARRIVE_BUTTON}»-ро пахш кунед."))
             return
 
         if step == "reason_text":

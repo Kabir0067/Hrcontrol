@@ -177,4 +177,34 @@ if command -v nginx >/dev/null 2>&1; then
     fi
 fi
 
+# 8. домени асосӣ (staff.softclub.tj): DNS ба сервер ишора кард → сертификат → WEBAPP_URL
+dom=$(head -1 "$ETC/domain" 2>/dev/null | tr -d ' \r\n')
+if [ -n "$dom" ] && command -v certbot >/dev/null 2>&1 && [ -e /etc/nginx/sites-enabled/hrcontrol-staff ]; then
+    cert="/etc/letsencrypt/live/$dom/fullchain.pem"
+    try=/run/hrcontrol-domain.try
+    if [ ! -e "$cert" ] && getent ahosts "$dom" >/dev/null 2>&1 \
+        && { [ ! -e "$try" ] || [ $(( $(date +%s) - $(stat -c %Y "$try") )) -gt 3600 ]; }; then
+        touch "$try"                                   # на зиёда аз як бор дар соат (лимити Let's Encrypt)
+        if certbot certonly --webroot -w /var/www/html -d "$dom" --non-interactive --agree-tos \
+                --keep-until-expiring >/var/log/hrcontrol-certbot.log 2>&1; then
+            log "сертификати $dom гирифта шуд"
+        fi
+    fi
+    site=/etc/nginx/sites-available/hrcontrol-staff
+    if [ -e "$cert" ] && grep -q "ssl-cert-snakeoil" "$site"; then
+        sed -i "s#/etc/ssl/certs/ssl-cert-snakeoil.pem#$cert#; s#/etc/ssl/private/ssl-cert-snakeoil.key#/etc/letsencrypt/live/$dom/privkey.pem#" "$site"
+        if nginx -t >/dev/null 2>&1; then systemctl reload nginx && log "nginx: $dom бо сертификати Let's Encrypt"; fi
+    fi
+    if [ -e "$cert" ] && ! grep -qx "WEBAPP_URL=https://$dom/" "$ETC/hrcontrol.env"; then
+        if grep -q '^WEBAPP_URL=' "$ETC/hrcontrol.env"; then
+            sed -i "s#^WEBAPP_URL=.*#WEBAPP_URL=https://$dom/#" "$ETC/hrcontrol.env"
+        else
+            echo "WEBAPP_URL=https://$dom/" >> "$ETC/hrcontrol.env"
+        fi
+        install -m 600 "$ETC/hrcontrol.env" "$VAULT/hrcontrol.env"
+        log "WEBAPP_URL → https://$dom/ (бот аз нав оғоз мешавад)"
+        systemctl restart "$APP"
+    fi
+fi
+
 exit 0

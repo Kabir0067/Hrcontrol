@@ -164,7 +164,8 @@ CREATE TABLE IF NOT EXISTS employees (
     work_days  TEXT,              -- рӯзҳои кории алоҳида ("0,1,2") ё NULL = умумӣ
     sheet_time  TEXT,             -- «Омадан (брнм)» аз Google Sheet (HH:MM) — худкор
     sheet_leave TEXT,             -- «Рафтан (брнм)» аз Google Sheet (HH:MM) — худкор
-    sheet_name  TEXT              -- номи расмӣ аз Google Sheet («Номи Корманд») — худкор
+    sheet_name  TEXT,             -- номи расмӣ аз Google Sheet («Номи Корманд») — худкор
+    branch      TEXT              -- филиал: ID-и ҷадвале, ки корманд дар он аст — худкор
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -217,6 +218,7 @@ _EXTRA_COLUMNS = {
         "sheet_time": "TEXT",
         "sheet_leave": "TEXT",
         "sheet_name": "TEXT",
+        "branch": "TEXT",
     },
     "attendance": {
         "reminded_at": "TEXT",
@@ -419,9 +421,14 @@ def emp_schedule(emp: dict, sch: dict) -> dict:
     own_time = _valid_clock(emp.get("work_time"))
     own_days = _parse_days(emp.get("work_days"))
     time_ = sheet_time or own_time
+    # Агар ҷадвалҳо пайваст бошанд, танҳо кормандони ҷадвал савол мегиранд
+    asked = not (sch.get("sheet_only") and not emp.get("branch"))
+    days = own_days if own_days is not None else list(sch["days"])
     return {
         "time": time_ or sch["time"],
-        "days": own_days if own_days is not None else list(sch["days"]),
+        "days": days if asked else [],
+        "asked": asked,
+        "branch": emp.get("branch") or None,
         "custom_time": bool(time_),
         "custom_days": own_days is not None,
         "custom": bool(time_) or own_days is not None,
@@ -464,7 +471,7 @@ def list_employees() -> list[dict]:
             SELECT e.user_id, e.name, e.username,
                    COALESCE(NULLIF(TRIM(e.alias), ''), NULLIF(TRIM(e.sheet_name), '')) AS alias, e.active,
                    e.first_seen, e.last_seen, e.work_time, e.work_days,
-                   e.sheet_time, e.sheet_leave, {_EMP_NAME} AS display,
+                   e.sheet_time, e.sheet_leave, e.branch, {_EMP_NAME} AS display,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id) AS requests,
                    (SELECT COUNT(*) FROM requests r WHERE r.user_id = e.user_id
                                                      AND r.status = 'pending') AS pending
@@ -794,7 +801,7 @@ def get_schedule() -> dict:
         raw = {r["key"]: r["value"] for r in conn.execute(
             "SELECT key, value FROM settings WHERE key IN "
             "('work_start_time', 'work_days', 'work_grace', 'daily_report', "
-            "'gsheet_enabled', 'gsheet_times')")}
+            "'gsheet_enabled', 'gsheet_times', 'gsheet_only', 'gsheet_books')")}
     time_ = _valid_clock(raw.get("work_start_time"))
     try:
         days = sorted({int(x) for x in str(raw["work_days"]).split(",") if x.strip() != ""
@@ -806,11 +813,18 @@ def get_schedule() -> dict:
     except (TypeError, ValueError):
         grace = cfg.DEFAULT_GRACE
     report = str(raw.get("daily_report", "1")) != "0"
-    # Вақтҳои «Омадан (брнм)» аз Google Sheet танҳо вақте ки синхронизатсия фаъол аст
-    sheet_times = (bool(cfg.GSHEET_ID) and str(raw.get("gsheet_enabled", "1")) != "0"
-                   and str(raw.get("gsheet_times", "1")) != "0")
+    # Ҷадвалҳои Google (филиалҳо): аз панел ё GSHEET_ID-и пешфарз
+    try:
+        books = json.loads(raw["gsheet_books"]) if "gsheet_books" in raw else ([cfg.GSHEET_ID] if cfg.GSHEET_ID else [])
+    except (TypeError, ValueError):
+        books = []
+    live = (bool(books) and str(raw.get("gsheet_enabled", "1")) != "0"
+            and os.path.isfile(cfg.GSHEET_KEY_FILE))        # бе калид ҳамоҳангсозӣ нест
+    # «Омадан (брнм)» аз ҷадвал — вақти саволи бот; «танҳо ҷадвал» — дигарон савол намегиранд
+    sheet_times = live and str(raw.get("gsheet_times", "1")) != "0"
+    sheet_only = live and str(raw.get("gsheet_only", "1")) != "0"
     return {"time": time_, "days": days, "grace": grace, "report": report,
-            "enabled": bool(time_), "sheet_times": sheet_times}
+            "enabled": bool(time_), "sheet_times": sheet_times, "sheet_only": sheet_only}
 
 
 def set_schedule(time: str | None = None, days: Iterable[int] | None = None,
@@ -988,7 +1002,7 @@ def create_due_attendance() -> list[dict]:
     stamp = cfg.now_str()
     with _tx() as conn:
         employees = _rows(conn.execute(
-            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.work_time, e.work_days, e.sheet_time
+            f"""SELECT e.user_id, {_EMP_NAME} AS name, e.work_time, e.work_days, e.sheet_time, e.branch
                   FROM employees e WHERE e.active = 1"""))
         have = {r["user_id"] for r in conn.execute(
             "SELECT user_id FROM attendance WHERE work_date = ?", (day,))}
@@ -1170,6 +1184,39 @@ def attendance_mark_arrived(user_id: int) -> Optional[dict]:
     return get_attendance(rec["id"])
 
 
+def attendance_self_arrive(user_id: int) -> tuple[str, Optional[dict]]:
+    """Тугмаи «✅ Ман омадам» (бе интизори саволи бот). Як бор дар рӯз.
+
+    "ok" — қайд шуд · "late_ok" — пас аз «наомадам» омад · "already" — аллакай омада буд ·
+    "leave" — имрӯз рухсатӣ дорад · "unknown" — корманд дар база нест.
+    """
+    emp = get_employee(user_id)
+    if not emp:
+        return "unknown", None
+    rec = get_today_attendance(user_id)
+    if rec and rec["status"] == "present":
+        return "already", rec
+    if rec and rec["status"] == "leave":
+        return "leave", rec
+    if rec:
+        was_absent = rec["status"] == "absent"
+        if not set_attendance_present(rec["id"]):
+            return "already", get_attendance(rec["id"])
+        return ("late_ok" if was_absent else "ok"), get_attendance(rec["id"])
+    es = emp_schedule(emp, get_schedule())
+    day, stamp = cfg.today_str(), cfg.now_str()
+    with _tx() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO attendance
+                   (user_id, name, work_date, scheduled_at, status, prompted_at, arrived_at,
+                    source, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'present', ?, ?, 'self', ?, ?)""",
+            (user_id, emp["display"], day, _scheduled_for(day, es["time"] or stamp[11:16]),
+             stamp, stamp, stamp, stamp))
+    rec = get_today_attendance(user_id)
+    return ("ok" if rec and rec["status"] == "present" else "already"), rec
+
+
 def set_attendance_left(attendance_id: int) -> bool:
     """Вақти рафтан аз кор — танҳо як бор ва танҳо пас аз «омад»."""
     stamp = cfg.now_str()
@@ -1228,27 +1275,36 @@ def employees_brief() -> list[dict]:
     with _ro() as conn:
         return _rows(conn.execute(
             f"""SELECT e.user_id, {_EMP_NAME} AS name, e.name AS tg_name, e.username, e.active,
-                       e.sheet_time, e.sheet_leave, e.sheet_name
+                       e.sheet_time, e.sheet_leave, e.sheet_name, e.branch
                   FROM employees e ORDER BY e.active DESC, name COLLATE NOCASE"""))
 
 
-def sync_sheet_plans(plans: dict[int, tuple]) -> int:
-    """Аз ҷадвал → база: (вақти омадан, вақти рафтан, номи расмӣ). Дигарон — тоза.
+def sync_sheet_plans(plans: dict[int, tuple], keep_branches: Iterable[str] = ()) -> int:
+    """Аз ҷадвал → база: (вақти омадан, вақти рафтан, номи расмӣ, филиал). Дигарон — тоза.
+
+    keep_branches: филиалҳое, ки ҳоло хонда нашуданд (Google хато дод) — бетағйир мемонанд.
 
     Бармегардонад: чанд корманд иваз шуд.
     """
     changed = 0
     with _tx() as conn:
+        keep = set(keep_branches or ())
         for row in conn.execute(
-                "SELECT user_id, sheet_time, sheet_leave, sheet_name FROM employees").fetchall():
-            want_in, want_out, want_name = (tuple(plans.get(row["user_id"], ())) + (None, None, None))[:3]
+                "SELECT user_id, sheet_time, sheet_leave, sheet_name, branch FROM employees").fetchall():
+            if row["user_id"] not in plans and row["branch"] and row["branch"] in keep:
+                continue
+            want_in, want_out, want_name, want_branch = (
+                tuple(plans.get(row["user_id"], ())) + (None, None, None, None))[:4]
             want_in = _valid_clock(want_in) or None
             want_out = _valid_clock(want_out) or None
             want_name = " ".join(str(want_name or "").split())[:80] or None
-            have = (row["sheet_time"] or None, row["sheet_leave"] or None, row["sheet_name"] or None)
-            if have != (want_in, want_out, want_name):
-                conn.execute("UPDATE employees SET sheet_time = ?, sheet_leave = ?, sheet_name = ? WHERE user_id = ?",
-                             (want_in, want_out, want_name, row["user_id"]))
+            want_branch = str(want_branch) if want_branch else None
+            have = (row["sheet_time"] or None, row["sheet_leave"] or None, row["sheet_name"] or None,
+                    row["branch"] or None)
+            if have != (want_in, want_out, want_name, want_branch):
+                conn.execute("""UPDATE employees SET sheet_time = ?, sheet_leave = ?, sheet_name = ?, branch = ?
+                                 WHERE user_id = ?""",
+                             (want_in, want_out, want_name, want_branch, row["user_id"]))
                 changed += 1
     if changed:
         log.info("📗 Вақтҳо аз Google Sheet: %d корманд навсозӣ шуд", changed)
@@ -1326,7 +1382,7 @@ def _people(conn, user_ids_with_records: set[int], user_id: int | None = None) -
         params = [int(user_id)]
     return _rows(conn.execute(
         f"""SELECT e.user_id, {_EMP_NAME} AS name, e.username, e.active, e.work_time, e.work_days,
-                   e.sheet_time, e.sheet_leave
+                   e.sheet_time, e.sheet_leave, e.branch
               FROM employees e WHERE {where} ORDER BY name COLLATE NOCASE""", params))
 
 
@@ -1360,7 +1416,7 @@ def get_attendance_day(day: str | None = None) -> dict:
         anyone_works = anyone_works or (works and bool(p["active"]))
         items.append({"user_id": p["user_id"], "name": p["name"], "username": p.get("username"),
                       "active": bool(p["active"]), "cell": cell, "start": es["time"],
-                      "custom": es["custom"], "works": works})
+                      "custom": es["custom"], "works": works, "branch": p.get("branch")})
     summary["total"] = len(items)
     summary["present"] = summary["on_time"] + summary["late"]
 
@@ -1420,6 +1476,7 @@ def get_attendance_month(period: str | None = None, user_id: int | None = None) 
         employees.append({"user_id": p["user_id"], "name": p["name"], "username": p.get("username"),
                           "active": bool(p["active"]), "cells": mine,
                           "start": es["time"], "days": es["days"], "custom": es["custom"],
+                          "branch": p.get("branch"),
                           "summary": _summarize(list(mine.values()))})
 
     next_key = _shift_month(key, 1)

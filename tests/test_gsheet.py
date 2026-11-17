@@ -25,8 +25,10 @@ TMP = tempfile.mkdtemp()
 os.environ.update({
     "BOT_TOKEN": "123456:TEST", "DB_PATH": os.path.join(TMP, "g.db"),
     "LOG_PATH": os.path.join(TMP, "g.log"), "GROUP_ID": "-100555", "BACKUP_DIR": os.path.join(TMP, "bk"),
-    "GSHEET_ID": "BOOK", "GSHEET_KEY_FILE": os.path.join(TMP, "none.json"),
+    "GSHEET_ID": "BOOK", "GSHEET_KEY_FILE": os.path.join(TMP, "key.json"),
 })
+with open(os.path.join(TMP, "key.json"), "w", encoding="utf-8") as _fh:   # «калид» ҳаст (вале нодуруст)
+    _fh.write("{}")
 sys.path.insert(0, ROOT)
 
 import logging                                   # noqa: E402
@@ -105,6 +107,7 @@ class FakeClient:
         self._check()
         return {"properties": {"locale": self.book.locale},
                 "sheets": [{"properties": {"sheetId": sid, "title": s["title"], "index": s["index"],
+                                           "hidden": s.get("hidden", False),
                                            "gridProperties": {"rowCount": 1000, "columnCount": 68}},
                             "developerMetadata": s["meta"]} for sid, s in self.book.sheets.items()]}
 
@@ -220,6 +223,11 @@ STAFF = [("Masafi Begimadov", "988201294", T("10:00"), "20:00", "ebf3fb"),
          ("Gholib Kabirov", "00 216 0010", "09:00", "14:00", "ffffff"),
          ("Sharifzoda Farida ", "988948189", T("09:30"), T("18:30"), "ebf3fb")]
 R_MASAFI, R_HAKIM, R_KABIR, R_GHOLIB, R_FARIDA = 4, 5, 6, 7, 8
+
+
+def book_cell_text(book, title, r, c):
+    v = book.cell(title, r, c).get("v")
+    return None if v is None else str(v)
 
 
 def build_book() -> FakeBook:
@@ -456,6 +464,7 @@ async def run():
     db.update_employee(F, alias="Фарида (менеҷер)")
     check("name set in the panel still wins", db.get_employee(F)["display"] == "Фарида (менеҷер)")
     db.update_employee(F, alias="")
+    db.sync_sheet_plans({})                                    # ҷадвали санҷишии аввал дигар нест
     db.set_settings({"gsheet_autolink": "1"})                  # барои санҷишҳои поён
 
     # ── синхронизатсияи аввал: «Лист1» → November 2026 ────────────────
@@ -478,7 +487,7 @@ async def run():
     check("autolink swapped order", tg(R_FARIDA) == str(F))
     check("no autolink for first-name-only / strangers", tg(R_GHOLIB) is None and tg(R_MASAFI) is None)
     check("locale-aware separator chosen («;» for ru_RU)", sync._sep == ";")
-    check("sync start date remembered", db.get_setting("gsheet_since") == "2026-11-16")
+    check("sync start date remembered", db.get_setting("gsheet_since:BOOK") == "2026-11-16")
     emp_k = db.get_employee(K)
     sch_k = db.emp_schedule(emp_k, db.get_schedule())
     check("planned time from sheet (14:00) → bot schedule", sch_k["time"] == "14:00" and sch_k["source"] == "sheet")
@@ -490,7 +499,8 @@ async def run():
     # ── бот мепурсад дар вақти ҷадвал ────────────────────────────────
     at("2026-11-16", "09:01")
     due = {r["user_id"] for r in db.create_due_attendance()}
-    check("09:00 people asked at 09:00 only", A in due and H not in due and K not in due, due)
+    check("not in the sheet → not asked; sheet people wait for their own time",
+          A not in due and H not in due and K not in due, due)
     at("2026-11-16", "10:01")
     due = {r["user_id"]: r for r in db.create_due_attendance()}
     check("Hakim asked at his 10:00", H in due and due[H]["scheduled_at"] == "2026-11-16 10:00:00")
@@ -539,7 +549,7 @@ async def run():
           and any("қайд шуда буд" in (c[2] or "") for c in calls))
     calls = await say(A, handlers.LEFT_BUTTON)
     check("cannot leave without arrival", any("қайд нашудааст" in (c[2] or "") for c in calls)
-          and db.get_today_attendance(A)["left_at"] is None)
+          and (db.get_today_attendance(A) or {}).get("left_at") is None)
     await sync.sync()
     out16 = book.cell("November 2026", R_KABIR, gs.day_col(16, "out"))
     check("leave written to «Рафт»", abs(out16["v"] - T("19:00")) < 1e-9)
@@ -565,12 +575,22 @@ async def run():
     group = [c[2] or "" for c in calls if c[0] == "send" and c[1] == cfg.GROUP_ID]
     check("request to managers shows the official name", any("Sharifzoda Farida" in t for t in group), group[:1])
 
-    # «Омадам» → тугмаи «рафтам»
+    # «✅ Ман омадам» — бе интизори савол, як бор дар рӯз
     at("2026-11-17", "09:02")
-    db.create_due_attendance()
+    due = {r["user_id"] for r in db.create_due_attendance()}
+    check("employee outside the sheet gets no daily question", A not in due)
+    calls = await say(A, handlers.ARRIVE_BUTTON)
     rec_a = db.get_today_attendance(A)
-    calls = await press(A, f"att:y:{rec_a['id']}")
+    check("«Ман омадам» records the arrival time", rec_a and rec_a["status"] == "present"
+          and rec_a["arrived_at"].endswith("09:02:00"))
     check("arrival message offers the leave button", any(f"att:out:{rec_a['id']}" in buttons(c[3]) for c in calls))
+    at("2026-11-17", "09:40")
+    calls = await say(A, handlers.ARRIVE_BUTTON)
+    check("«Ман омадам» only once a day", db.get_today_attendance(A)["arrived_at"].endswith("09:02:00")
+          and any("як бор" in (c[2] or "") for c in calls))
+    keyboard = handlers._main_reply_kb()
+    labels = [b["text"] if isinstance(b, dict) else b.text for row in keyboard.keyboard for b in row]
+    check("reply keyboard has both buttons", handlers.ARRIVE_BUTTON in labels and handlers.LEFT_BUTTON in labels)
 
     # ── одам дастӣ иваз кард → бот даст намезанад ──────────────────────
     book.put("November 2026", R_KABIR, gs.day_col(16), T("14:05"))
@@ -612,7 +632,7 @@ async def run():
     await sync.sync()
     dec = next((s for s in book.sheets.values() if s["title"] == "December 2026"), None)
     check("new month tab created", dec is not None and len(book.sheets) == 2)
-    check("new month is the first tab", dec and dec["index"] == 0)
+    check("new month goes right after the previous one", dec and dec["index"] == 1)
     check("tags: Dec=2026-12, Nov stays 2026-11",
           dec and [m["metadataValue"] for m in dec["meta"]] == ["2026-12"]
           and [m["metadataValue"] for m in nov["meta"]] == ["2026-11"])
@@ -654,8 +674,8 @@ async def run():
 
     # ── пайвасти дастӣ аз панел ────────────────────────────────────────
     state = gs.panel_state()
-    gholib = next(r for r in state["rows"] if r["name"] == "Gholib Kabirov")
-    check("panel suggests the right person", gholib["suggest"] and gholib["suggest"][0]["user_id"] == G)
+    check("panel: one branch with its rows", len(state["books"]) == 1 and state["books"][0]["total"] == 5
+          and state["books"][0]["linked"] == 3)
     check("panel lists unlinked bot users", {u["user_id"] for u in state["unlinked"]} == {A, G})
     await sync.link(R_GHOLIB + 1, "Gholib Kabirov", G)
     check("manual link writes the Telegram id", book.cell(D_, R_GHOLIB, 1)["v"] == str(G))
@@ -730,14 +750,91 @@ async def run():
     await sync.sync()
     check("recovers after the error", gs.STATE["ok"] is True and gs.STATE["error"] == "")
 
+    # ── ду филиал (Manager) ────────────────────────────────────────────
+    at("2026-11-18", "08:00")
     gs._SYNCER = None
+    bookA, bookB = build_book(), build_book()
+    bookB.sheets[0]["title"] = "November 26"                 # номи варақи корхона — бетағйир мемонад
+    hidden = bookB.add(9, "November 2026", 1)                # нусхаи кӯҳнаи пинҳон
+    hidden["hidden"] = True
+    hidden["cells"] = copy.deepcopy(bookB.sheets[0]["cells"])
+    company = '=IFERROR((IF(AND(F5<>"",F5-TIMEVALUE($D5)<=TIMEVALUE("00:15")),1,0))/MAX(1,IF(F5<>"",1,0)),"")'
+    bookB.put("November 26", R_MASAFI, 67, None, f=company)
+    bookB.locale = "en_US"
+    bookB.sep = ","
+    M2 = 7001
+    db.touch_employee(M2, "Масафи (@masafi)", "masafi")
+    bookA.put("Лист1", R_HAKIM, 1, str(H))
+    bookB.put("November 26", R_MASAFI, 1, str(M2))
+    db.set_settings({"gsheet_books": json.dumps([{"id": "SHEET_PROFSOYUZ_0000000001", "name": "Профсоюз"}, {"id": "SHEET_FILIAL_2_00000000002", "name": "Филиали 2"}])})
+    clients = {"SHEET_PROFSOYUZ_0000000001": FakeClient(bookA), "SHEET_FILIAL_2_00000000002": FakeClient(bookB)}
+    mgr = gs.Manager(None, client_factory=lambda sid: clients[sid])
+    gs._MANAGER = mgr
+    await mgr.sync_all()
+    check("two branches: employee gets the branch of his sheet",
+          db.get_employee(M2)["branch"] == "SHEET_FILIAL_2_00000000002" and db.get_employee(H)["branch"] == "SHEET_PROFSOYUZ_0000000001")
+    check("company tab name «November 26» kept", bookB.sheets[0]["title"] == "November 26"
+          and [m["metadataValue"] for m in bookB.sheets[0]["meta"]] == ["2026-11"])
+    check("hidden old tabs are never touched", hidden["meta"] == [] and hidden["title"] == "November 2026")
+    check("company «Натиҷа %» formula made text-safe",
+          bookB.cell("November 26", R_MASAFI, 67)["f"] == gs.result_formula(R_MASAFI + 1, ","))
+    state = gs.panel_state()
+    check("panel shows both branches", [b["name"] for b in state["books"]] == ["Профсоюз", "Филиали 2"]
+          and [b["linked"] for b in state["books"]] == [1, 1])
+    check("employees carry their branch in the panel",
+          next(e for e in state["employees"] if e["user_id"] == M2)["branch"] == "SHEET_FILIAL_2_00000000002")
+    sch = db.get_schedule()
+    check("only sheet employees are asked", db.emp_schedule(db.get_employee(M2), sch)["asked"]
+          and not db.emp_schedule(db.get_employee(A), sch)["asked"])
+
+    bookB.fail = "Google 503: B"
+    try:
+        await mgr.sync_all()
+        ok = False
+    except gs.SheetsError as exc:
+        ok = "Филиали 2" in str(exc)
+    check("one branch down → error names it", ok)
+    check("…and its employees keep their times and branch", db.get_employee(M2)["branch"] == "SHEET_FILIAL_2_00000000002"
+          and db.get_employee(M2)["sheet_time"] == "10:00" and db.get_employee(H)["branch"] == "SHEET_PROFSOYUZ_0000000001")
+    bookB.fail = None
+
+    ok = await gs.set_plan(M2, "11:00", "19:00")
+    check("time changed in the panel → written to the sheet", ok
+          and book_cell_text(bookB, "November 26", R_MASAFI, 3) == "11:00"
+          and book_cell_text(bookB, "November 26", R_MASAFI, 4) == "19:00")
+    check("…and the bot uses it at once", db.get_employee(M2)["sheet_time"] == "11:00")
+    check("employee outside the sheets → nothing to write", await gs.set_plan(A, "12:00", None) is False)
+
+    at("2026-12-01", "08:00")
+    await mgr.sync_all()
+    decB = next((t for t in bookB.sheets.values() if t["title"] == "December 26"), None)
+    check("next month named like the company tabs («December 26»)", decB is not None)
+    check("…placed right after «November 26»", decB and decB["index"] == bookB.sheets[0]["index"] + 1)
+    check("…and the panel time is kept for the new month",
+          decB and book_cell_text(bookB, "December 26", R_MASAFI, 3) == "11:00")
+    check("…hidden «December»-like tabs untouched", hidden["meta"] == [])
+
+    await gs.link(R_MASAFI + 1, "Masafi Begimadov", M2, "SHEET_PROFSOYUZ_0000000001")
+    check("moving a person to another branch clears the old row",
+          book_cell_text(bookB, "December 26", R_MASAFI, 1) is None
+          and book_cell_text(bookA, "December 2026", R_MASAFI, 1) == str(M2)
+          and db.get_employee(M2)["branch"] == "SHEET_PROFSOYUZ_0000000001")
+    gs._MANAGER = None
+    db.set_settings({"gsheet_books": json.dumps([{"id": "SHEET_PROFSOYUZ_0000000001", "name": "Профсоюз"}])})
+
     try:
         await gs.sync_now()
         ok = False
     except gs.SheetsError:
         ok = True
     check("sync_now without config → clear error", ok)
-    check("no key file → not configured", gs.build() is None and "Калиди" in gs.STATE["error"])
+    check("broken key file → not configured", gs.build() is None and "Калиди" in gs.STATE["error"])
+    check("sheet id from a link", gs.parse_sheet_id("https://docs.google.com/spreadsheets/d/1KH-HbN9XfbxkFRWC8ozwOjM3JJhvYEtp8bzlHNwjBCo/edit?gid=0") == "1KH-HbN9XfbxkFRWC8ozwOjM3JJhvYEtp8bzlHNwjBCo"
+          and gs.parse_sheet_id("bad") is None)
+    check("month title styles", gs.month_title("2026-12", "short") == "December 26"
+          and gs.title_style("November 26") == "short" and gs.title_style("November 2026") == "long")
+    check("month-like names are kept", gs.looks_like_month("November 26") and gs.looks_like_month("Октябр")
+          and not gs.looks_like_month("Лист1"))
 
 
 asyncio.run(run())

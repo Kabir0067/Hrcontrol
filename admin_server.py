@@ -641,11 +641,23 @@ async def handle_employee_update(request: web.Request) -> web.Response:
     alias = str(data["alias"]) if "alias" in data and data["alias"] is not None else None
     active = bool(data["active"]) if "active" in data else None
     extra: dict = {}
+    emp0 = db.get_employee(uid)
+    in_sheet = bool(emp0 and emp0.get("branch"))
+    sheet_in = sheet_out = None
     if "work_time" in data:                          # null / "" — мисли ҳама
         value = str(data.get("work_time") or "").strip()
         if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
             return _err("Вақтро ба шакли 14:00 нависед")
-        extra["work_time"] = value
+        if in_sheet:
+            sheet_in = value or None                 # корманди ҷадвал: вақт дар ҷадвал иваз мешавад
+        else:
+            extra["work_time"] = value
+    if "leave_time" in data:
+        value = str(data.get("leave_time") or "").strip()
+        if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+            return _err("Вақти рафтанро ба шакли 18:00 нависед")
+        if in_sheet:
+            sheet_out = value or None
     if "work_days" in data:                          # null — мисли ҳама
         days = data.get("work_days")
         if days is not None:
@@ -655,9 +667,16 @@ async def handle_employee_update(request: web.Request) -> web.Response:
                 return _err("Ақаллан як рӯзи кориро интихоб кунед")
         extra["work_days"] = days
     db.update_employee(uid, alias=alias, active=active, **extra)
+    message = "Сабт шуд"
+    if in_sheet and (sheet_in or sheet_out):
+        try:
+            if await gsheet.set_plan(uid, sheet_in, sheet_out):
+                message = "Сабт шуд — вақт дар ҷадвали Google ҳам иваз шуд (барои ҳамаи моҳҳои оянда)"
+        except (gsheet.SheetsError, asyncio.TimeoutError) as exc:
+            return _err(f"Вақт ба ҷадвали Google навишта нашуд: {exc}", 502)
     emp = db.get_employee(uid)
     emp["schedule"] = db.emp_schedule(emp, db.get_schedule())
-    return _json({"ok": True, "employee": emp, "message": "Сабт шуд"})
+    return _json({"ok": True, "employee": emp, "message": message})
 
 
 @_guard
@@ -704,7 +723,7 @@ async def handle_gsheet_settings(request: web.Request) -> web.Response:
     data = await _body(request)
     values = {}
     for field, key in (("enabled", "gsheet_enabled"), ("times", "gsheet_times"),
-                       ("autolink", "gsheet_autolink")):
+                       ("autolink", "gsheet_autolink"), ("only", "gsheet_only")):
         if field in data:
             values[key] = "1" if data.get(field) else "0"
     if not values:
@@ -731,16 +750,59 @@ async def handle_gsheet_link(request: web.Request) -> web.Response:
     row = _int(data.get("row"))
     name = str(data.get("name") or "")
     uid = _int(data.get("user_id")) or None
+    book = str(data.get("book") or "") or None
     if row < 5 or not name:
         return _err("Сатри ҷадвал нодуруст аст")
     if uid and not db.get_employee(uid):
         return _err("Корманд ёфт нашуд", 404)
     try:
-        await gsheet.link(row, name, uid)
+        await gsheet.link(row, name, uid, book)
     except (gsheet.SheetsError, asyncio.TimeoutError) as exc:
         return _json({"error": str(exc) or "Google ҷавоб надод", **gsheet.panel_state()}, 502)
     return _json({"ok": True, **gsheet.panel_state(),
                   "message": "Пайваст шуд" if uid else "Пайваст бекор шуд"})
+
+
+@_guard
+async def handle_gsheet_books(request: web.Request) -> web.Response:
+    """{action: add, url, name} · {action: rename, id, name} · {action: remove, id}"""
+    data = await _body(request)
+    action = str(data.get("action") or "")
+    books = gsheet.get_books()
+    name = " ".join(str(data.get("name") or "").split())[:60]
+    if action == "add":
+        if not name:
+            return _err("Номи филиалро нависед")
+        if len(books) >= 10:
+            return _err("Зиёда аз 10 филиал илова кардан мумкин нест")
+        try:
+            info = await asyncio.wait_for(gsheet.check_book(str(data.get("url") or "")), timeout=60)
+        except (gsheet.SheetsError, asyncio.TimeoutError) as exc:
+            return _err(str(exc) or "Google ҷавоб надод", 400)
+        if any(b["id"] == info["id"] for b in books):
+            return _err("Ин ҷадвал аллакай илова шудааст")
+        books.append({"id": info["id"], "name": name})
+        message = f"Филиали «{name}» илова шуд (варақи «{info['tab']}»)"
+    elif action == "rename":
+        target = next((b for b in books if b["id"] == data.get("id")), None)
+        if not target or not name:
+            return _err("Филиал ёфт нашуд" if not target else "Номи филиалро нависед")
+        target["name"] = name
+        message = "Номи филиал иваз шуд"
+    elif action == "remove":
+        before = len(books)
+        books = [b for b in books if b["id"] != data.get("id")]
+        if len(books) == before:
+            return _err("Филиал ёфт нашуд", 404)
+        message = "Филиал аз система бардошта шуд (худи ҷадвал бетағйир мемонад)"
+    else:
+        return _err("Амали номаълум")
+    gsheet.save_books(books)
+    try:
+        await gsheet.sync_now()
+    except (gsheet.SheetsError, asyncio.TimeoutError):
+        pass
+    return _json({"ok": True, **gsheet.panel_state(), "message": message})
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -921,7 +983,7 @@ async def handle_attendance_export(request: web.Request) -> web.Response:
         for day, cell in sorted(emp["cells"].items()):
             w.writerow([day, emp["name"], _STATE_TG.get(cell["s"], cell["s"]), cell["sched"], cell["t"],
                         cell["late"] or "", cell.get("out") or "", cell["reason"], cell["eta"],
-                        {"bot": "бот", "admin": "админ", "request": "дархост"}.get(cell["src"], cell["src"])])
+                        {"bot": "бот", "self": "тугма", "admin": "админ", "request": "дархост"}.get(cell["src"], cell["src"])])
     return _csv_response(buf, f"davomot-{data['period']['key']}.csv")
 
 
@@ -994,6 +1056,7 @@ def build_app() -> web.Application:
     r.add_post("/api/gsheet/settings", handle_gsheet_settings)
     r.add_post("/api/gsheet/sync", handle_gsheet_sync)
     r.add_post("/api/gsheet/link", handle_gsheet_link)
+    r.add_post("/api/gsheet/books", handle_gsheet_books)
 
     r.add_get("/api/employees", handle_employees)
     r.add_post("/api/employees/{user_id:\\d+}", handle_employee_update)

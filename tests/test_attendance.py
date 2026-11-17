@@ -17,6 +17,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 TMP = tempfile.mkdtemp()
 os.environ.update({
+    "GSHEET_KEY_FILE": os.path.join(TMP, "no-google-key.json"),
     "BOT_TOKEN": "123456:TEST", "DB_PATH": os.path.join(TMP, "a.db"),
     "LOG_PATH": os.path.join(TMP, "a.log"), "GROUP_ID": "-100555", "BACKUP_DIR": os.path.join(TMP, "bk"),
 })
