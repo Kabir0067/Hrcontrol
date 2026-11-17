@@ -2048,19 +2048,56 @@ td.m-off { background-image: repeating-linear-gradient(135deg, transparent 0 5px
 }
 
 /* ══════════════ Google Sheet ══════════════ */
+/* Равзана: бадан scroll мешавад; рӯйхатҳо дар дохили flex фишурда намешаванд */
+.sheet__body { min-height: 0; flex: 1 1 auto; -webkit-overflow-scrolling: touch; }
+.sheet__body > * { flex-shrink: 0; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
 .item__out { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-3); text-align: right; }
-.gs-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 12px 0 4px; }
-.gs-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 230px); gap: 10px; align-items: center; padding: 9px 12px; }
-.gs-row + .gs-row { border-top: 1px solid var(--border); }
+
+.gs-sum { display: flex; flex-wrap: wrap; gap: 6px; }
+.gs-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.gs-row, .gs-person {
+  display: grid; align-items: center; gap: 12px; width: 100%;
+  padding: 10px 14px; border: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+  transition: background .12s;
+}
+.gs-row { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 300px); }
+.gs-person { grid-template-columns: auto minmax(0, 1fr) auto; }
+.gs-row + .gs-row, .gs-person + .gs-person { border-top: 1px solid var(--border); }
+.gs-row:hover, .gs-person:hover { background: var(--surface-2); }
+.gs-row:focus-visible, .gs-person:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.gs-row > *, .gs-person > * { min-width: 0; }
 .gs-row__n { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
 .gs-row.is-linked .gs-row__n { color: var(--ok-text); font-weight: 700; }
 .gs-row__main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .gs-row__main b { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-row__main small { color: var(--text-3); font-size: 11.8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gs-row > * { min-width: 0; }
-.gs-row .select { width: 100%; min-width: 0; max-width: 100%; min-height: 36px; padding: 6px 10px; font-size: 13.5px; text-overflow: ellipsis; }
+
+.gs-pick {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px;
+  padding: 5px 8px 5px 10px; border: 1.5px dashed var(--border-2); border-radius: 10px; color: var(--brand-text);
+}
+.gs-pick.is-set { border-style: solid; border-color: var(--border); background: var(--surface-2); color: inherit; }
+.gs-row:hover .gs-pick { border-color: var(--brand); }
+.gs-pick__add { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 650; }
+.gs-pick__add svg { width: 16px; height: 16px; }
+.gs-pick__warn { font-size: 12.5px; font-weight: 600; color: var(--warn-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-pick__who { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.gs-pick__who > span { display: flex; flex-direction: column; min-width: 0; }
+.gs-pick__who b { font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-pick__who small { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-pick__chev { display: inline-flex; color: var(--text-3); flex-shrink: 0; }
+.gs-pick__chev svg { width: 16px; height: 16px; }
+
+.gs-back { align-self: flex-start; }
+.gs-person.is-current { background: var(--ok-soft); }
+.gs-person.is-loading { opacity: .6; pointer-events: none; }
+.gs-person:disabled { cursor: default; }
+.gs-person__note { color: var(--warn-text) !important; }
+
 @media (max-width: 560px) {
-  .gs-row { grid-template-columns: 26px minmax(0, 1fr); row-gap: 6px; }
-  .gs-row .select { grid-column: 2; }
+  .gs-row { grid-template-columns: 24px minmax(0, 1fr); row-gap: 8px; padding: 10px 12px; }
+  .gs-pick { grid-column: 2; }
+  .gs-person { padding: 10px 12px; gap: 10px; }
 }

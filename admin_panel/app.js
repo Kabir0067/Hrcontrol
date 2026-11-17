@@ -2420,61 +2420,112 @@ function bindGsPanel(g) {
   if (open && tg && tg.openLink) open.addEventListener('click', (e) => { e.preventDefault(); try { tg.openLink(g.url); } catch (_) { window.open(g.url, '_blank'); } });
 }
 
-/** Пайвасти кормандони бот ба сатрҳои ҷадвал (сутуни «Телеграм id»). */
+/** Пайвасти кормандони бот ба сатрҳои ҷадвал (сутуни «Телеграм id»).
+ *  Рӯйхати сатрҳо → пахш → интихоби корманде, ки дар бот /start кардааст (бо ҷустуҷӯ). */
 function openSheetLinks(g) {
-  const draw = (state) => {
+  let state = g;
+  let query = '';
+  const tgName = (e) => shortName(e.tg_name || e.name);
+  const idLine = (e) => [e.username ? '@' + e.username : '', `ID ${e.user_id}`].filter(Boolean).join(' · ');
+
+  async function link(row, userId) {
+    const body = { row: row.row, name: row.name, user_id: userId };
+    const res = await post('/api/gsheet/link', body, { raw: true, quiet: true });
+    if (!res || res.error) {
+      haptic('error');
+      toast((res && res.error) || 'Алоқа нест', 'danger');
+      const fresh = await api('/api/gsheet', { quiet: true });
+      if (fresh && fresh.rows) { state = fresh; renderGsPanel(fresh); }
+      drawList();
+      return;
+    }
+    haptic('success');
+    toast(res.message, 'ok');
+    state = res;
+    renderGsPanel(res);
+    drawList();
+  }
+
+  function drawList() {
     const rows = (state.rows || []).filter((r) => r.name);
-    const emps = state.employees || [];
-    const used = new Map(rows.filter((r) => r.user_id).map((r) => [r.user_id, r.row]));
-    const who = (e) => `${shortName(e.tg_name || e.name)}${e.username ? ' @' + e.username : ''} · ID ${e.user_id}`;
-    const byId = new Map(emps.map((e) => [e.user_id, e]));
-    const list = rows.map((r) => {
-      const sugg = r.suggest || [];
-      const sugIds = new Set(sugg.map((s) => s.user_id));
-      const options = ['<option value="">— пайваст нест —</option>']
-        .concat(sugg.map((s) => `<option value="${s.user_id}">★ ${esc(byId.has(s.user_id) ? who(byId.get(s.user_id)) : shortName(s.name))}</option>`))
-        .concat(emps.filter((e) => !sugIds.has(e.user_id) && (e.active || e.user_id === r.user_id)).map((e) =>
-          `<option value="${e.user_id}" ${e.user_id === r.user_id ? 'selected' : ''}>${esc(who(e))}${used.has(e.user_id) && e.user_id !== r.user_id ? ` · сатри ${used.get(e.user_id)}` : ''}</option>`));
+    const emps = new Map((state.employees || []).map((e) => [e.user_id, e]));
+    const linked = rows.filter((r) => r.user_id).length;
+    const list = rows.map((r, i) => {
       const plan = r.plan_in ? `${r.plan_in}${r.plan_out ? '–' + r.plan_out : ''}` : 'вақт нест';
-      const linkedEmp = r.user_id ? byId.get(r.user_id) : null;
-      const note = r.user_id ? `<span style="color:var(--ok-text)">ID ${esc(r.tg)}${linkedEmp ? ' · Telegram: ' + esc(shortName(linkedEmp.tg_name || '')) : ''}</span>`
-        : r.dup ? `<span style="color:var(--danger-text)">ID ${esc(r.tg)} дар 2 сатр</span>`
-          : r.unknown ? `ID ${esc(r.tg)} — ҳанӯз ба бот /start накардааст`
-            : 'Телеграм id нест';
-      return `<div class="gs-row${r.user_id ? ' is-linked' : ''}">
+      const emp = r.user_id ? emps.get(r.user_id) : null;
+      let pick;
+      if (emp) {
+        pick = `<span class="gs-pick__who">${avatar(tgName(emp), emp.user_id, 'avatar--sm')}<span><b>${esc(tgName(emp))}</b><small>${esc(idLine(emp))}</small></span></span>`;
+      } else if (r.dup) {
+        pick = `<span class="gs-pick__warn">ID ${esc(r.tg)} дар 2 сатр — интихоб кунед</span>`;
+      } else if (r.unknown) {
+        pick = `<span class="gs-pick__warn">ID ${esc(r.tg)} ҳанӯз /start накардааст</span>`;
+      } else {
+        pick = `<span class="gs-pick__add">${ICON.user} Пайваст кардан</span>`;
+      }
+      return `<button type="button" class="gs-row${emp ? ' is-linked' : ''}" data-i="${i}">
         <span class="gs-row__n">${r.row}</span>
-        <span class="gs-row__main"><b>${esc(r.name)}</b><small>${esc(plan)} · ${note}</small></span>
-        <select class="select" data-row="${r.row}" data-name="${esc(r.name)}" aria-label="Корманди бот барои ${esc(r.name)}">${options.join('')}</select>
-      </div>`;
+        <span class="gs-row__main"><b>${esc(r.name)}</b><small>${esc(plan)}</small></span>
+        <span class="gs-pick${emp ? ' is-set' : ''}">${pick}<i class="gs-pick__chev">${ICON.right}</i></span>
+      </button>`;
     }).join('');
-    const unl = state.unlinked || [];
     $('#sheet-body').innerHTML = `
       <div class="sheet__title">Кормандон дар ҷадвал</div>
-      <p class="sheet__text">Бот кормандро <b>танҳо аз рӯи «Телеграм id»</b> мешиносад. Барои ҳар сатри варақи «${esc(state.tab || '')}» (номи расмӣ) ҳисоби Telegram-и ҳамон одамро интихоб кунед — ID худкор ба сутуни «Телеграм id» навишта мешавад. ID-ро дастӣ дар ҷадвал навиштан ҳам мумкин аст.</p>
-      <div class="gs-list">${list || '<div class="card__body">' + emptyState('Дар ҷадвал корманд нест') + '</div>'}</div>
-      ${unl.length ? `<div class="section-title">Дар бот ҳастанд, дар ҷадвал не · ${unl.length}</div>
-        <p class="sheet__text small">${unl.map((u) => esc(who(u))).join('<br>')}</p>
-        <p class="panel__note">Агар ин кормандон бояд дар ҷадвал бошанд, барояшон дар ҷадвал сатр илова кунед (номи корманд, вақтҳо) ва баъд ин ҷо интихоб кунед.</p>` : ''}`;
-    $$('#sheet-body select[data-row]').forEach((sel) => sel.addEventListener('change', async () => {
-      sel.disabled = true;
-      const body = { row: Number(sel.dataset.row), name: sel.dataset.name, user_id: sel.value ? Number(sel.value) : null };
-      const res = await post('/api/gsheet/link', body, { raw: true, quiet: true });
-      if (!res || res.error) {
-        haptic('error');
-        toast((res && res.error) || 'Алоқа нест', 'danger');
-        const fresh = await api('/api/gsheet', { quiet: true });
-        if (fresh && fresh.rows) { g = fresh; draw(fresh); renderGsPanel(fresh); } else sel.disabled = false;
-        return;
-      }
-      haptic('success');
-      toast(res.message, 'ok');
-      draw(res);
-      renderGsPanel(res);
-      g = res;
-    }));
-  };
+      <p class="sheet__text">Бот кормандро <b>танҳо аз рӯи «Телеграм id»</b> мешиносад. Сатрро пахш кунед ва аз рӯйхати кормандоне, ки ботро кушодаанд, ҳамон одамро интихоб кунед — ID худкор ба ҷадвал навишта мешавад.</p>
+      <div class="gs-sum">${pill(`${linked} аз ${rows.length} пайваст`, linked === rows.length && rows.length ? 'ok' : 'muted')}${pill(`варақи «${state.tab || ''}»`, 'muted')}</div>
+      <div class="gs-list">${list || emptyState('Дар ҷадвал корманд нест')}</div>`;
+    $$('#sheet-body .gs-row').forEach((b) => b.addEventListener('click', () => { haptic('light'); drawPick(rows[Number(b.dataset.i)]); }));
+  }
+
+  function drawPick(row) {
+    const rows = (state.rows || []).filter((r) => r.name);
+    const rowOf = new Map(rows.filter((r) => r.user_id).map((r) => [r.user_id, r.row]));
+    const rank = (e) => (e.user_id === row.user_id ? 0 : rowOf.has(e.user_id) ? 2 : 1);   // ҳамин сатр → озод → дигарон
+    const people = (state.employees || []).slice().sort((a, b) =>
+      (rank(a) - rank(b)) || (b.active - a.active) || tgName(a).localeCompare(tgName(b)));
+    $('#sheet-body').innerHTML = `
+      <button type="button" class="btn btn--ghost btn--sm gs-back" id="gs-back">${ICON.left} Ҳамаи сатрҳо</button>
+      <div class="sheet__title">${esc(row.name)}</div>
+      <p class="sheet__text">Сатри ${row.row} · ${esc(row.plan_in || '—')}${row.plan_out ? '–' + esc(row.plan_out) : ''}. Корманде, ки дар бот /start кардааст, интихоб кунед:</p>
+      <input class="input" id="gs-q" type="search" placeholder="Ҷустуҷӯ: ном, @username ё ID" value="${esc(query)}" autocomplete="off">
+      <div class="gs-list" id="gs-people"></div>
+      ${row.user_id ? `<button type="button" class="btn btn--soft-danger btn--block" id="gs-unlink">${ICON.x} Пайвастро бекор кардан</button>` : ''}
+      <p class="panel__note">Корманд дар рӯйхат нест? Бигӯед, ки ботро кушода /start-ро пахш кунад — баъд ин ҷо пайдо мешавад.</p>`;
+    const fill = () => {
+      const q = query.trim().toLowerCase().replace(/^@/, '');
+      const shown = people.filter((e) => !q || [tgName(e), e.name, e.username || '', String(e.user_id)]
+        .some((x) => String(x).toLowerCase().includes(q)));
+      $('#gs-people').innerHTML = shown.map((e) => {
+        const here = e.user_id === row.user_id;
+        const other = rowOf.has(e.user_id) && !here ? `ҳоло дар сатри ${rowOf.get(e.user_id)} — ба ин сатр мегузарад` : '';
+        const tag = here ? pill('ҳамин сатр', 'ok') : rowOf.has(e.user_id) ? pill(`сатри ${rowOf.get(e.user_id)}`, 'muted') : pill('озод', 'info');
+        return `<button type="button" class="gs-person${here ? ' is-current' : ''}" data-uid="${e.user_id}">
+          ${avatar(tgName(e), e.user_id, e.active ? '' : 'is-off')}
+          <span class="gs-row__main"><b>${esc(tgName(e))}</b><small>${esc(idLine(e))}${e.active ? '' : ' · савол намегирад'}</small>${other ? `<small class="gs-person__note">${esc(other)}</small>` : ''}</span>
+          ${tag}
+        </button>`;
+      }).join('') || `<div class="card__body">${emptyState(q ? 'Ёфт нашуд' : 'Ҳанӯз касе ботро накушодааст')}</div>`;
+      $$('#gs-people .gs-person').forEach((b) => b.addEventListener('click', async () => {
+        const uid = Number(b.dataset.uid);
+        if (uid === row.user_id) { query = ''; drawList(); return; }
+        $$('#gs-people .gs-person').forEach((x) => { x.disabled = true; });
+        b.classList.add('is-loading');
+        query = '';
+        await link(row, uid);
+      }));
+    };
+    fill();
+    const q = $('#gs-q');
+    q.addEventListener('input', () => { query = q.value; fill(); });
+    $('#gs-back').addEventListener('click', () => { query = ''; drawList(); });
+    const un = $('#gs-unlink');
+    if (un) un.addEventListener('click', async () => { un.classList.add('is-loading'); await link(row, null); });
+    $('#sheet-body').scrollTop = 0;
+    if (window.matchMedia('(min-width: 700px)').matches) setTimeout(() => q.focus(), 60);
+  }
+
   openSheet(skel(4), { wide: true });
-  draw(g);
+  drawList();
 }
 
 async function saveAccount(e) {
