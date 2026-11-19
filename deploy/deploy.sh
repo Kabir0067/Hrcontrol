@@ -117,7 +117,7 @@ fi
 
 # ── 5. санҷишҳо (бо базаи муваққатӣ; ба базаи корӣ дахл надоранд) ───
 log "санҷишҳо…"
-for t in test_resilience test_attendance test_admin_api test_gsheet; do
+for t in test_resilience test_attendance test_admin_api test_gsheet test_requests_mode; do
     if ! (cd "$CODE" && timeout 300 "$CODE/.venv/bin/python3" "tests/$t.py" > "/tmp/hrcontrol-$t.log" 2>&1); then
         tail -20 "/tmp/hrcontrol-$t.log" >&2
         rollback

@@ -5,6 +5,11 @@
 
 **Продакшн:** https://staff.softclub.tj/ · бот `@SoftClubHrControlBot` · фармони `/admin`
 
+> **Реҷаи ҷорӣ — танҳо дархостҳо** (қарори роҳбарият, 19.11.2026): бот дархостро ба роҳбарият мебарад ва
+> ҷавобро меорад. Давомот, «Ман омадам / Ман рафтам», «Реҷаи кори ман» ва ҳамоҳангсозӣ бо Google Sheet
+> хомӯшанд — ҳозириро админ дар ҷадвал дастӣ мегузорад. Барои баргардонидани давомот:
+> `ATTENDANCE=1` дар `/etc/hrcontrol/hrcontrol.env` ва `systemctl restart hrcontrol`.
+
 ---
 
 ## Имкониятҳо
@@ -96,7 +101,7 @@ watchdog сертификати Let's Encrypt мегирад ва `WEBAPP_URL`-�
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
-for t in test_resilience test_attendance test_admin_api test_gsheet; do .venv/bin/python tests/$t.py; done
+for t in test_resilience test_attendance test_admin_api test_gsheet test_requests_mode; do .venv/bin/python tests/$t.py; done
 .venv/bin/python tests/test_admin_api.py --serve     # панел бо маълумоти намунавӣ: http://127.0.0.1:18901/__dev_login
 ```
 

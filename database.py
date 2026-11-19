@@ -823,8 +823,10 @@ def get_schedule() -> dict:
     # «Омадан (брнм)» аз ҷадвал — вақти саволи бот; «танҳо ҷадвал» — дигарон савол намегиранд
     sheet_times = live and str(raw.get("gsheet_times", "1")) != "0"
     sheet_only = live and str(raw.get("gsheet_only", "1")) != "0"
+    if not cfg.ATTENDANCE:                          # реҷаи «танҳо дархостҳо»
+        sheet_times = sheet_only = False
     return {"time": time_, "days": days, "grace": grace, "report": report,
-            "enabled": bool(time_), "sheet_times": sheet_times, "sheet_only": sheet_only}
+            "enabled": bool(time_) and cfg.ATTENDANCE, "sheet_times": sheet_times, "sheet_only": sheet_only}
 
 
 def set_schedule(time: str | None = None, days: Iterable[int] | None = None,

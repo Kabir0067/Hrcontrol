@@ -2249,3 +2249,6 @@ td.m-off { background-image: repeating-linear-gradient(135deg, transparent 0 5px
   .opt-list { grid-template-columns: minmax(0, 1fr); }
 }
 @media (min-width: 880px) { .login__logoimg { display: none !important; } }   /* логотип аллакай дар паҳлӯ ҳаст */
+
+@media (min-width: 900px) { .kpis--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 899px) { .kpis--3 > :last-child { grid-column: 1 / -1; } }

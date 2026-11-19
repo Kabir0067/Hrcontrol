@@ -141,8 +141,8 @@ _stopping = False
 
 async def setup_commands() -> None:
     await bot.set_my_commands([
-        BotCommand("start", "🚀 Оғоз — омадам, рафтам, дархост"),
-        BotCommand("reja", "🗓 Реҷаи кори ман (аз ҷадвал)"),
+        BotCommand("start", "🚀 Оғоз — омадам, рафтам, дархост" if cfg.ATTENDANCE else "🚀 Оғоз — дархости нав"),
+        *([BotCommand("reja", "🗓 Реҷаи кори ман (аз ҷадвал)")] if cfg.ATTENDANCE else []),
         BotCommand("darkhost", "📋 Дархостҳои ман"),
         BotCommand("bekor", "❌ Бекор кардани амали ҷорӣ"),
         BotCommand("kumak", "ℹ️ Бот чӣ кор мекунад"),
@@ -160,8 +160,10 @@ async def scheduler_task() -> None:
     log.info("🔔 Ҳалқаи ёдоварӣ оғоз шуд (ҳар %d сония)", cfg.LOOP_INTERVAL)
     tick = 0
     while True:
-        for job in (send_reminders, notify_overdue, process_arrival_checks,
-                    process_work_attendance, remind_attendance, send_daily_report, daily_backup):
+        jobs = (send_reminders, notify_overdue, process_arrival_checks, daily_backup)
+        if cfg.ATTENDANCE:
+            jobs += (process_work_attendance, remind_attendance, send_daily_report)
+        for job in jobs:
             try:
                 await job(bot)
             except asyncio.CancelledError:
@@ -304,8 +306,11 @@ async def main() -> int:
         asyncio.create_task(supervise("polling", polling_task), name="polling"),
         asyncio.create_task(supervise("scheduler", scheduler_task), name="scheduler"),
         asyncio.create_task(supervise("web", web_task), name="web"),
-        asyncio.create_task(supervise("sheets", sheets_task), name="sheets"),
     ]
+    if cfg.ATTENDANCE:                     # Google Sheet — танҳо дар реҷаи давомот
+        tasks.append(asyncio.create_task(supervise("sheets", sheets_task), name="sheets"))
+    else:
+        log.info("📋 Реҷа: танҳо дархостҳо (давомот ва Google Sheet хомӯш)")
 
     try:
         await stop.wait()

@@ -339,6 +339,7 @@ async def handle_health(request: web.Request) -> web.Response:
                     "conflict": conflict_age is not None and conflict_age < 900,
                     "conflict_age": conflict_age},
         "db": state,
+        "features": {"attendance": cfg.ATTENDANCE},
     }
     # Ҳолати диск — танҳо барои панели воридшуда (барои мониторинги беруна лозим нест)
     if _auth(request):
